@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  addrservice:
+    # Image name will be substituted by envsubst in CI
+    image: ${IMAGE_TAG}
+    ports:
+      - "8080:8080"
+    deploy:
+      mode: replicated
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 10s
+        order: stop-first
+    environment:
+      - TORNADO_SETTINGS_DEBUG=false

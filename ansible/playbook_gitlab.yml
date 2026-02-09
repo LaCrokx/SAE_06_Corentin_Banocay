@@ -1,0 +1,45 @@
+---
+- name: Deploy GitLab via Docker
+  hosts: gitlab
+  become: yes
+  vars:
+    gitlab_external_url: "http://gitlab.example.com"
+  
+  tasks:
+    - name: Install dependencies
+      apt:
+        name:
+          - docker.io
+          - docker-compose
+        state: present
+        update_cache: yes
+
+    - name: Ensure docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Create GitLab config directory
+      file:
+        path: /srv/gitlab
+        state: directory
+        mode: '0755'
+
+    - name: Deploy GitLab using Docker
+      docker_container:
+        name: gitlab
+        image: 'gitlab/gitlab-ce:latest'
+        restart_policy: always
+        ports:
+          - "80:80"
+          - "443:443"
+          - "2222:22"
+        volumes:
+          - '/srv/gitlab/config:/etc/gitlab'
+          - '/srv/gitlab/logs:/var/log/gitlab'
+          - '/srv/gitlab/data:/var/opt/gitlab'
+        env:
+          GITLAB_OMNIBUS_CONFIG: |
+            external_url '{{ gitlab_external_url }}'
+            gitlab_rails['gitlab_shell_ssh_port'] = 2222

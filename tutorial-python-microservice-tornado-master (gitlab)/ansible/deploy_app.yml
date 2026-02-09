@@ -1,0 +1,58 @@
+---
+- name: Deploy Python Microservice
+  hosts: all
+  become: yes
+  vars:
+    app_dir: /opt/python-microservice
+    repo_url: "{{ git_repo_url }}" # To be provided at runtime or in vars
+  
+  tasks:
+    - name: Install Python 3 and pip
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Clone the repository
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_dir }}"
+        force: yes
+
+    - name: Create virtual environment
+      command: python3 -m venv {{ app_dir }}/.venv
+      args:
+        creates: "{{ app_dir }}/.venv"
+
+    - name: Install requirements
+      command: "{{ app_dir }}/.venv/bin/pip install -r {{ app_dir }}/requirements.txt"
+
+    - name: Create systemd service
+      copy:
+        dest: /etc/systemd/system/microservice.service
+        content: |
+          [Unit]
+          Description=Python Microservice
+          After=network.target
+
+          [Service]
+          User=root
+          WorkingDirectory={{ app_dir }}
+          ExecStart={{ app_dir }}/.venv/bin/python {{ app_dir }}/run.py
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart Microservice
+
+  handlers:
+    - name: Restart Microservice
+      service:
+        name: microservice
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
