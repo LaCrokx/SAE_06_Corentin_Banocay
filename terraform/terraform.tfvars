@@ -1,0 +1,5 @@
+pm_api_url = "https://10.129.4.41:8006/api2/json"
+pm_user = "terraform-prov@pve"
+pm_password = "28091992"
+target_node = "pve"
+template_name = "ubuntu-template"
