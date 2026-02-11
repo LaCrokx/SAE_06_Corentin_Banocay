@@ -1,0 +1,189 @@
+---
+# Play 1: Setup DNS Server on GitLab VM
+- name: Setup DNS Server
+  hosts: dns_server
+  become: yes
+  vars:
+    dns_domain: "local"
+    gitlab_ip: "{{ hostvars[groups['gitlab'][0]]['ansible_host'] }}"
+    k8s_master_ip: "{{ hostvars[groups['k8s_master'][0]]['ansible_host'] }}"
+    k8s_node1_ip: "{{ hostvars[groups['k8s_workers'][0]]['ansible_host'] }}"
+    k8s_node2_ip: "{{ hostvars[groups['k8s_workers'][1]]['ansible_host'] }}"
+  
+  tasks:
+    - name: Install dnsmasq
+      apt:
+        name: dnsmasq
+        state: present
+        update_cache: yes
+
+    - name: Stop systemd-resolved (conflicts with dnsmasq)
+      service:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+
+    - name: Make resolv.conf mutable before removing
+      file:
+        path: /etc/resolv.conf
+        attributes: -i
+      ignore_errors: yes
+
+    - name: Remove systemd-resolved stub
+      file:
+        path: /etc/resolv.conf
+        state: absent
+
+    - name: Create new resolv.conf for DNS server
+      copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 8.8.8.8
+          nameserver 8.8.4.4
+        mode: '0644'
+
+    - name: Configure dnsmasq with custom DNS records
+      copy:
+        dest: /etc/dnsmasq.d/custom.conf
+        content: |
+          # Enable DHCP logging
+          log-queries
+          log-dhcp
+          
+          # Domain configuration
+          domain={{ dns_domain }}
+          expand-hosts
+          
+          # DNS records for infrastructure
+          address=/gitlab.{{ dns_domain }}/{{ gitlab_ip }}
+          address=/gitlab-server.{{ dns_domain }}/{{ gitlab_ip }}
+          address=/k8s-master.{{ dns_domain }}/{{ k8s_master_ip }}
+          address=/k8s-node-1.{{ dns_domain }}/{{ k8s_node1_ip }}
+          address=/k8s-node-2.{{ dns_domain }}/{{ k8s_node2_ip }}
+          
+          # Upstream DNS servers
+          server=8.8.8.8
+          server=8.8.4.4
+          
+          # Listen on all interfaces
+          listen-address=127.0.0.1
+          listen-address={{ gitlab_ip }}
+          
+          # Don't forward requests for the local domain
+          local=/{{ dns_domain }}/
+        mode: '0644'
+      register: dnsmasq_config
+
+    - name: Configure dnsmasq main config
+      lineinfile:
+        path: /etc/dnsmasq.conf
+        regexp: '^#?conf-dir='
+        line: 'conf-dir=/etc/dnsmasq.d/,*.conf'
+        state: present
+
+    - name: Restart dnsmasq service
+      service:
+        name: dnsmasq
+        state: restarted
+        enabled: yes
+      when: dnsmasq_config.changed
+
+    - name: Ensure dnsmasq is running
+      service:
+        name: dnsmasq
+        state: started
+        enabled: yes
+
+    - name: Wait for dnsmasq to be ready
+      wait_for:
+        port: 53
+        host: "{{ gitlab_ip }}"
+        timeout: 30
+
+    - name: Test DNS resolution locally
+      command: nslookup gitlab.{{ dns_domain }} 127.0.0.1
+      register: dns_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display DNS test result
+      debug:
+        var: dns_test.stdout_lines
+
+# Play 2: Configure DNS clients on all VMs
+- name: Configure DNS Clients
+  hosts: all
+  become: yes
+  vars:
+    dns_server_ip: "{{ hostvars[groups['gitlab'][0]]['ansible_host'] }}"
+    dns_domain: "local"
+  
+  tasks:
+    - name: Stop systemd-resolved on clients
+      service:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: Make resolv.conf mutable before removing
+      file:
+        path: /etc/resolv.conf
+        attributes: -i
+      ignore_errors: yes
+
+    - name: Remove existing resolv.conf
+      file:
+        path: /etc/resolv.conf
+        state: absent
+
+    - name: Create new resolv.conf pointing to DNS server
+      copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ dns_server_ip }}
+          search {{ dns_domain }}
+          options ndots:1
+        mode: '0644'
+
+    - name: Make resolv.conf immutable (prevent overwrite)
+      file:
+        path: /etc/resolv.conf
+        attributes: +i
+      ignore_errors: yes
+
+    - name: Install DNS utilities for testing
+      apt:
+        name:
+          - dnsutils
+          - iputils-ping
+        state: present
+        update_cache: yes
+
+    - name: Test DNS resolution to GitLab
+      command: nslookup gitlab.{{ dns_domain }}
+      register: gitlab_dns
+      changed_when: false
+      failed_when: false
+
+    - name: Test DNS resolution to K8s master
+      command: nslookup k8s-master.{{ dns_domain }}
+      register: k8s_dns
+      changed_when: false
+      failed_when: false
+
+    - name: Display DNS test results
+      debug:
+        msg:
+          - "GitLab DNS: {{ gitlab_dns.stdout }}"
+          - "K8s Master DNS: {{ k8s_dns.stdout }}"
+
+    - name: Test ping to GitLab via hostname
+      command: ping -c 2 gitlab.{{ dns_domain }}
+      register: ping_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display ping results
+      debug:
+        var: ping_test.stdout_lines

@@ -9,39 +9,51 @@ resource "proxmox_vm_qemu" "gitlab_vm" {
   name        = "gitlab-server"
   target_node = var.target_node
   clone       = var.template_name
+  full_clone  = true
   os_type     = "cloud-init"
   cpu {
-    cores = 2
+    cores   = 4
     sockets = 1
-    type = "host"
+    type    = "host"
   }
-  memory      = 4096
-  agent       = 1
-  scsihw      = "virtio-scsi-pci"
-  bootdisk    = "scsi0"
+  memory   = 8192
+  agent    = 1
+  scsihw   = "virtio-scsi-pci"
+  bootdisk = "scsi0"
 
   disk {
-    slot = "scsi0"
-    size = "20G"
-    type = "disk"
-    storage = "local-lvm"
+    slot     = "scsi0"
+    size     = "20G"
+    type     = "disk"
+    storage  = "local-lvm"
     iothread = true
   }
 
   disk {
-    slot = "ide2"
-    type = "cloudinit"
+    slot    = "ide2"
+    type    = "cloudinit"
     storage = "local-lvm"
   }
 
   network {
-    model = "virtio"
+    model  = "virtio"
     bridge = "vmbr0"
-    id = 0
+    id     = 0
   }
 
-  ipconfig0 = "ip=dhcp"
-  
+  vga {
+    type = "std"
+  }
+
+  serial {
+    id   = 0
+    type = "socket"
+  }
+
+  ipconfig0  = "ip=dhcp"
+  ciuser     = var.vm_user
+  cipassword = var.vm_password
+
   sshkeys = <<EOF
   ${var.ssh_key}
   EOF
@@ -55,38 +67,50 @@ resource "proxmox_vm_qemu" "k8s_nodes" {
   name        = "k8s-node-${count.index + 1}"
   target_node = var.target_node
   clone       = var.template_name
+  full_clone  = true
   os_type     = "cloud-init"
   cpu {
-    cores = 2
+    cores   = 2
     sockets = 1
-    type = "host"
+    type    = "host"
   }
-  memory      = 4096
-  agent       = 1
-  scsihw      = "virtio-scsi-pci"
-  bootdisk    = "scsi0"
+  memory   = 4096
+  agent    = 1
+  scsihw   = "virtio-scsi-pci"
+  bootdisk = "scsi0"
 
   disk {
-    slot = "scsi0"
-    size = "20G"
-    type = "disk"
-    storage = "local-lvm"
+    slot     = "scsi0"
+    size     = "20G"
+    type     = "disk"
+    storage  = "local-lvm"
     iothread = true
   }
 
   disk {
-    slot = "ide2"
-    type = "cloudinit"
+    slot    = "ide2"
+    type    = "cloudinit"
     storage = "local-lvm"
   }
 
   network {
-    model = "virtio"
+    model  = "virtio"
     bridge = "vmbr0"
-    id = 0
+    id     = 0
   }
 
-  ipconfig0 = "ip=dhcp"
+  vga {
+    type = "std"
+  }
+
+  serial {
+    id   = 0
+    type = "socket"
+  }
+
+  ipconfig0  = "ip=dhcp"
+  ciuser     = var.vm_user
+  cipassword = var.vm_password
 
   sshkeys = <<EOF
   ${var.ssh_key}

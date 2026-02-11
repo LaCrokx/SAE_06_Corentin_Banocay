@@ -1,0 +1,227 @@
+---
+- name: Deploy Python Microservice to GitLab
+  hosts: localhost
+  gather_facts: no
+  vars:
+    gitlab_host: "10.129.4.187"
+    gitlab_url: "http://{{ gitlab_host }}"
+    project_name: "python-microservice-tornado"
+    project_path: "root/{{ project_name }}"
+    local_repo_path: "/tmp/{{ project_name }}"
+    source_path: "{{ playbook_dir }}/../tutorial-python-microservice-tornado-master (gitlab)"
+    gitlab_user: "root"
+    
+  tasks:
+    - name: Wait for GitLab to be accessible
+      uri:
+        url: "{{ gitlab_url }}/-/health"
+        status_code: 200
+        timeout: 10
+      register: gitlab_ready
+      until: gitlab_ready.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Get GitLab root password from remote server
+      shell: ssh -o StrictHostKeyChecking=no root@{{ gitlab_host }} "docker exec gitlab grep 'Password:' /etc/gitlab/initial_root_password 2>/dev/null | awk '{print \$2}' || cat /root/gitlab_credentials.txt 2>/dev/null | grep Password | awk '{print \$2}'"
+      register: gitlab_password_result
+      changed_when: false
+      failed_when: false
+
+    - name: Set GitLab password
+      set_fact:
+        gitlab_password: "{{ gitlab_password_result.stdout | trim }}"
+
+    - name: Display GitLab credentials
+      debug:
+        msg:
+          - "GitLab URL: {{ gitlab_url }}"
+          - "Username: {{ gitlab_user }}"
+          - "Password: {{ gitlab_password }}"
+
+    - name: Get GitLab root API token
+      uri:
+        url: "{{ gitlab_url }}/api/v4/session"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          login: "{{ gitlab_user }}"
+          password: "{{ gitlab_password }}"
+        status_code: [200, 201]
+        validate_certs: no
+      register: session_response
+      when: gitlab_password != ""
+
+    - name: Create personal access token
+      uri:
+        url: "{{ gitlab_url }}/api/v4/user/personal_access_tokens"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ session_response.json.private_token | default('') }}"
+        body_format: json
+        body:
+          name: "automation-token"
+          scopes: ["api", "write_repository", "read_repository"]
+        status_code: [200, 201, 422]  # 422 if token already exists
+        validate_certs: no
+      register: token_response
+      when: session_response is defined and session_response.json is defined
+      failed_when: false
+
+    - name: Set API token
+      set_fact:
+        api_token: "{{ token_response.json.token | default(session_response.json.private_token) }}"
+      when: token_response is defined or session_response is defined
+
+    - name: Check if project already exists
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_path | urlencode }}"
+        method: GET
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        status_code: [200, 404]
+        validate_certs: no
+      register: project_check
+      when: api_token is defined
+
+    - name: Create GitLab project via API
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        body_format: json
+        body:
+          name: "{{ project_name }}"
+          path: "{{ project_name }}"
+          visibility: "public"
+          initialize_with_readme: false
+        status_code: [200, 201]
+        validate_certs: no
+      register: project_response
+      when: 
+        - api_token is defined
+        - project_check.status == 404
+
+    - name: Display project information
+      debug:
+        msg:
+          - "Project created/exists at: {{ gitlab_url }}/{{ project_path }}"
+          - "Project ID: {{ project_response.json.id | default(project_check.json.id) }}"
+
+    - name: Remove existing local repository if present
+      file:
+        path: "{{ local_repo_path }}"
+        state: absent
+
+    - name: Create local repository directory
+      file:
+        path: "{{ local_repo_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Initialize git repository
+      shell: |
+        cd {{ local_repo_path }}
+        git init
+        git config user.name "Administrator"
+        git config user.email "admin@example.com"
+      args:
+        executable: /bin/bash
+
+    - name: Copy Python microservice files to repo
+      synchronize:
+        src: "{{ source_path }}/"
+        dest: "{{ local_repo_path }}/"
+        recursive: yes
+        delete: no
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.venv"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+
+    - name: Verify .gitlab-ci.yml exists
+      stat:
+        path: "{{ local_repo_path }}/.gitlab-ci.yml"
+      register: gitlab_ci_file
+
+    - name: Display CI/CD status
+      debug:
+        msg: "{{ '.gitlab-ci.yml found - CI/CD pipeline will be triggered' if gitlab_ci_file.stat.exists else '.gitlab-ci.yml NOT found - CI/CD will not run automatically' }}"
+
+    - name: Add git remote
+      shell: |
+        cd {{ local_repo_path }}
+        git remote add origin http://{{ gitlab_user }}:{{ gitlab_password }}@{{ gitlab_host }}/{{ project_path }}.git || true
+      args:
+        executable: /bin/bash
+      when: gitlab_password != ""
+
+    - name: Add all files to git
+      shell: |
+        cd {{ local_repo_path }}
+        git add .
+      args:
+        executable: /bin/bash
+
+    - name: Commit files
+      shell: |
+        cd {{ local_repo_path }}
+        git commit -m "Initial commit: Python Tornado microservice" || true
+      args:
+        executable: /bin/bash
+
+    - name: Set main branch
+      shell: |
+        cd {{ local_repo_path }}
+        git branch -M main
+      args:
+        executable: /bin/bash
+
+    - name: Push to GitLab
+      shell: |
+        cd {{ local_repo_path }}
+        git push -u origin main --force
+      args:
+        executable: /bin/bash
+      register: push_result
+      when: gitlab_password != ""
+
+    - name: Display push result
+      debug:
+        var: push_result.stdout_lines
+      when: push_result is defined
+
+    - name: Trigger CI/CD pipeline
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_response.json.id | default(project_check.json.id) }}/pipeline"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        body_format: json
+        body:
+          ref: "main"
+        status_code: [200, 201]
+        validate_certs: no
+      register: pipeline_response
+      when: 
+        - api_token is defined
+        - gitlab_ci_file.stat.exists
+      failed_when: false
+
+    - name: Display pipeline information
+      debug:
+        msg:
+          - "========================================="
+          - "Deployment Complete!"
+          - "========================================="
+          - "GitLab Project URL: {{ gitlab_url }}/{{ project_path }}"
+          - "Repository pushed successfully!"
+          - "CI/CD Pipeline Status: {{ 'Triggered - Pipeline ID: ' + (pipeline_response.json.id | string) if pipeline_response is defined and pipeline_response.status == 201 else 'Not triggered (check .gitlab-ci.yml)' }}"
+          - ""
+          - "Next steps:"
+          - "1. Visit {{ gitlab_url }}/{{ project_path }}"
+          - "2. Register a GitLab Runner if not already done"
+          - "3. Monitor CI/CD pipeline: {{ gitlab_url }}/{{ project_path }}/-/pipelines"
+          - "========================================="
