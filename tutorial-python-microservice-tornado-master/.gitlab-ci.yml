@@ -20,22 +20,29 @@ build:
 
 deploy:
   stage: deploy
-  image: alpine:latest
+  image: bitnami/kubectl:latest
   before_script:
-    - apk add --no-cache openssh-client gettext
-    - eval $(ssh-agent -s)
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-    - mkdir -p ~/.ssh
-    - chmod 700 ~/.ssh
-    - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_CONTENT" > ~/.kube/config
+    - chmod 600 ~/.kube/config
   script:
-    - echo "Deploying version $IMAGE_TAG to Swarm Manager at $SSH_HOST"
-    # Substitute environment variables in docker-stack.yml
-    - envsubst < docker-stack.yml > docker-stack.deployed.yml
-    # Copy the processed stack file to the manager
-    - scp docker-stack.deployed.yml $SSH_USER@$SSH_HOST:/tmp/docker-stack.yml
-    # Deploy the stack on the manager
-    - ssh $SSH_USER@$SSH_HOST "docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY && docker stack deploy --with-registry-auth -c /tmp/docker-stack.yml addrservice"
+    - echo "Deploying version $IMAGE_TAG to Kubernetes cluster"
+    # Create namespace if it doesn't exist
+    - kubectl create namespace addrservice --dry-run=client -o yaml | kubectl apply -f -
+    # Create docker registry secret for pulling images from GitLab Registry
+    - kubectl create secret docker-registry gitlab-registry 
+        --docker-server=$CI_REGISTRY 
+        --docker-username=$CI_REGISTRY_USER 
+        --docker-password=$CI_REGISTRY_PASSWORD 
+        --docker-email=gitlab@example.com
+        -n addrservice --dry-run=client -o yaml | kubectl apply -f -
+    # Apply Kubernetes deployment manifest (with env variable substitution)
+    - export CI_REGISTRY_IMAGE CI_COMMIT_SHORT_SHA
+    - envsubst < k8s/deployment.yaml | kubectl apply -f -
+    # Wait for rollout to complete
+    - kubectl rollout status deployment/addrservice -n addrservice --timeout=5m
+    # Display deployment info
+    - kubectl get pods -n addrservice
+    - kubectl get svc -n addrservice
   only:
-    - master
     - main
