@@ -1,29 +1,42 @@
 ---
 - name: Deploy Python Microservice to GitLab
-  hosts: localhost
+  hosts: gitlab
   gather_facts: no
   vars:
-    gitlab_host: "10.129.4.187"
-    gitlab_url: "http://{{ gitlab_host }}"
+    gitlab_host: "{{ ansible_host }}"
+    gitlab_url: "http://127.0.0.1"  # Access GitLab locally on the VM
     project_name: "python-microservice-tornado"
     project_path: "root/{{ project_name }}"
     local_repo_path: "/tmp/{{ project_name }}"
-    source_path: "{{ playbook_dir }}/../tutorial-python-microservice-tornado-master (gitlab)"
+    source_path: "/tmp/microservice-source"  # Will copy source here first
     gitlab_user: "root"
     
   tasks:
+    - name: Copy microservice source files to GitLab VM
+      synchronize:
+        src: "{{ playbook_dir }}/../tutorial-python-microservice-tornado-master/"
+        dest: "{{ source_path }}/"
+        recursive: yes
+        delete: no
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.venv"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+
     - name: Wait for GitLab to be accessible
       uri:
-        url: "{{ gitlab_url }}/-/health"
-        status_code: 200
+        url: "{{ gitlab_url}}/"
+        status_code: 200,302
         timeout: 10
+        follow_redirects: none
       register: gitlab_ready
-      until: gitlab_ready.status == 200
+      until: gitlab_ready.status in [200, 302]
       retries: 30
       delay: 10
 
-    - name: Get GitLab root password from remote server
-      shell: ssh -o StrictHostKeyChecking=no root@{{ gitlab_host }} "docker exec gitlab grep 'Password:' /etc/gitlab/initial_root_password 2>/dev/null | awk '{print \$2}' || cat /root/gitlab_credentials.txt 2>/dev/null | grep Password | awk '{print \$2}'"
+    - name: Get GitLab root password (barebone installation)
+      shell: grep 'Password:' /etc/gitlab/initial_root_password 2>/dev/null | awk '{print $2}' || grep Password /root/gitlab_credentials.txt 2>/dev/null | awk '{print $2}'
       register: gitlab_password_result
       changed_when: false
       failed_when: false
@@ -39,39 +52,25 @@
           - "Username: {{ gitlab_user }}"
           - "Password: {{ gitlab_password }}"
 
-    - name: Get GitLab root API token
-      uri:
-        url: "{{ gitlab_url }}/api/v4/session"
-        method: POST
-        body_format: form-urlencoded
-        body:
-          login: "{{ gitlab_user }}"
-          password: "{{ gitlab_password }}"
-        status_code: [200, 201]
-        validate_certs: no
-      register: session_response
-      when: gitlab_password != ""
-
-    - name: Create personal access token
-      uri:
-        url: "{{ gitlab_url }}/api/v4/user/personal_access_tokens"
-        method: POST
-        headers:
-          PRIVATE-TOKEN: "{{ session_response.json.private_token | default('') }}"
-        body_format: json
-        body:
-          name: "automation-token"
-          scopes: ["api", "write_repository", "read_repository"]
-        status_code: [200, 201, 422]  # 422 if token already exists
-        validate_certs: no
-      register: token_response
-      when: session_response is defined and session_response.json is defined
+    - name: Create GitLab Personal Access Token via Rails console
+      shell: |
+        gitlab-rails runner "
+        user = User.find_by(username: 'root')
+        token = user.personal_access_tokens.create(
+          name: 'automation-token',
+          scopes: ['api', 'write_repository', 'read_repository'],
+          expires_at: 365.days.from_now
+        )
+        puts token.token
+        " 2>/dev/null | tail -1
+      register: token_creation
+      changed_when: false
       failed_when: false
 
     - name: Set API token
       set_fact:
-        api_token: "{{ token_response.json.token | default(session_response.json.private_token) }}"
-      when: token_response is defined or session_response is defined
+        api_token: "{{ token_creation.stdout | trim }}"
+      when: token_creation.stdout is defined and token_creation.stdout != ""
 
     - name: Check if project already exists
       uri:
@@ -96,18 +95,31 @@
           path: "{{ project_name }}"
           visibility: "public"
           initialize_with_readme: false
-        status_code: [200, 201]
+        status_code: [200, 201, 400]  # 400 = already exists
         validate_certs: no
       register: project_response
       when: 
         - api_token is defined
         - project_check.status == 404
+      failed_when: false
+
+    - name: Fetch project information (to get ID in all cases)
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/root%2F{{ project_name }}"
+        method: GET
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        status_code: [200, 404]
+        validate_certs: no
+      register: project_info
+      when: api_token is defined
+      failed_when: false
 
     - name: Display project information
       debug:
         msg:
           - "Project created/exists at: {{ gitlab_url }}/{{ project_path }}"
-          - "Project ID: {{ project_response.json.id | default(project_check.json.id) }}"
+          - "Project ID: {{ project_info.json.id | default('1') }}"
 
     - name: Remove existing local repository if present
       file:
@@ -129,17 +141,14 @@
       args:
         executable: /bin/bash
 
-    - name: Copy Python microservice files to repo
-      synchronize:
-        src: "{{ source_path }}/"
-        dest: "{{ local_repo_path }}/"
-        recursive: yes
-        delete: no
-        rsync_opts:
-          - "--exclude=.git"
-          - "--exclude=.venv"
-          - "--exclude=__pycache__"
-          - "--exclude=*.pyc"
+    - name: Copy Python microservice files to repo (including hidden files)
+      shell: |
+        cp -r {{ source_path }}/. {{ local_repo_path }}/
+        # Remove unwanted directories if they were copied
+        rm -rf {{ local_repo_path }}/.venv {{ local_repo_path }}/__pycache__
+        find {{ local_repo_path }} -name '*.pyc' -delete
+      args:
+        executable: /bin/bash
 
     - name: Verify .gitlab-ci.yml exists
       stat:
@@ -153,7 +162,9 @@
     - name: Add git remote
       shell: |
         cd {{ local_repo_path }}
-        git remote add origin http://{{ gitlab_user }}:{{ gitlab_password }}@{{ gitlab_host }}/{{ project_path }}.git || true
+        # URL-encode password for git remote (replace + with %2B, / with %2F, = with %3D)
+        ENCODED_PASS=$(echo "{{ gitlab_password }}" | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
+        git remote add origin "http://{{ gitlab_user }}:${ENCODED_PASS}@127.0.0.1/{{ project_path }}.git" || true
       args:
         executable: /bin/bash
       when: gitlab_password != ""
@@ -195,7 +206,7 @@
 
     - name: Trigger CI/CD pipeline
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects/{{ project_response.json.id | default(project_check.json.id) }}/pipeline"
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/pipeline"
         method: POST
         headers:
           PRIVATE-TOKEN: "{{ api_token }}"
@@ -208,6 +219,7 @@
       when: 
         - api_token is defined
         - gitlab_ci_file.stat.exists
+        - project_info.json.id is defined
       failed_when: false
 
     - name: Display pipeline information
