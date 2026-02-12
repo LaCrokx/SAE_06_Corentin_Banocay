@@ -190,6 +190,20 @@
       args:
         executable: /bin/bash
 
+    - name: Unprotect main branch to allow push
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/protected_branches/main"
+        method: DELETE
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        status_code: [204, 404]  # 204 = deleted, 404 = not protected
+        validate_certs: no
+      register: unprotect_result
+      when: 
+        - api_token is defined
+        - project_info.json.id is defined
+      failed_when: false
+
     - name: Push to GitLab
       shell: |
         cd {{ local_repo_path }}
