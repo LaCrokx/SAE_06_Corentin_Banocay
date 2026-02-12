@@ -20,11 +20,10 @@ build:
 
 deploy:
   stage: deploy
-  image: bitnami/kubectl:latest
   before_script:
-    - mkdir -p ~/.kube
-    - echo "$KUBECONFIG_CONTENT" > ~/.kube/config
-    - chmod 600 ~/.kube/config
+    # Use kubeconfig file already present on the runner
+    - export KUBECONFIG=/etc/gitlab-runner/kubeconfig/config
+    - kubectl version --client
   script:
     - echo "Deploying version $IMAGE_TAG to Kubernetes cluster"
     # Create namespace if it doesn't exist
