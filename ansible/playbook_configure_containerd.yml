@@ -1,0 +1,22 @@
+---
+- name: Configure Containerd for Insecure Registry
+  hosts: kubernetes
+  become: yes
+  tasks:
+    - name: Configure insecure registry in config.toml
+      blockinfile:
+        path: /etc/containerd/config.toml
+        insertafter: '\[plugins."io.containerd.grpc.v1.cri".registry.mirrors\]'
+        block: |
+          
+              [plugins."io.containerd.grpc.v1.cri".registry.mirrors."gitlab.local:5005"]
+                endpoint = ["http://gitlab.local:5005"]
+              [plugins."io.containerd.grpc.v1.cri".registry.mirrors."10.129.5.71:5005"]
+                endpoint = ["http://10.129.5.71:5005"]
+      register: containerd_config
+
+    - name: Restart containerd
+      systemd:
+        name: containerd
+        state: restarted
+      when: containerd_config.changed

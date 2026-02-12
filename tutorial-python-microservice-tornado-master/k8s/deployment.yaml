@@ -24,10 +24,10 @@ spec:
       - name: addrservice
         image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
         ports:
-        - containerPort: 8000
+        - containerPort: 8080
         env:
         - name: PORT
-          value: "8000"
+          value: "8080"
         - name: ENVIRONMENT
           value: "production"
         resources:
@@ -39,14 +39,14 @@ spec:
             cpu: "200m"
         livenessProbe:
           httpGet:
-            path: /health
-            port: 8000
+            path: /addresses
+            port: 8080
           initialDelaySeconds: 15
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
-            port: 8000
+            path: /addresses
+            port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5
 ---
@@ -62,5 +62,5 @@ spec:
   ports:
   - protocol: TCP
     port: 80
-    targetPort: 8000
+    targetPort: 8080
     nodePort: 30080

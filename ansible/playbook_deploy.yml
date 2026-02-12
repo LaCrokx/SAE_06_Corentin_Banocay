@@ -236,6 +236,61 @@
         - project_info.json.id is defined
       failed_when: false
 
+    - name: Create GitLab Runner via API
+      uri:
+        url: "{{ gitlab_url }}/api/v4/user/runners"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        body_format: json
+        body:
+          runner_type: "instance_type"
+          description: "Automated Shell Runner"
+          tag_list: ["shell", "docker", "automated"]
+          run_untagged: true
+          locked: false
+        status_code: [201, 400]  # 400 if runner already exists
+        validate_certs: no
+      register: runner_create_response
+      when: api_token is defined
+      failed_when: false
+
+    - name: Extract runner authentication token
+      set_fact:
+        runner_token: "{{ runner_create_response.json.token }}"
+      when: 
+        - runner_create_response.json is defined
+        - runner_create_response.json.token is defined
+
+    - name: Register GitLab Runner with gitlab-runner command
+      shell: |
+        gitlab-runner register \
+          --non-interactive \
+          --url "{{ gitlab_url }}" \
+          --token "{{ runner_token }}" \
+          --executor "shell" \
+          --description "Automated Shell Runner"
+      register: runner_register_result
+      when: runner_token is defined
+      failed_when: false
+      changed_when: "'Runner registered successfully' in runner_register_result.stderr or 'Registered runner' in runner_register_result.stderr"
+
+    - name: Ensure GitLab Runner service is running
+      systemd:
+        name: gitlab-runner
+        state: started
+        enabled: yes
+      when: runner_token is defined
+      failed_when: false
+
+    - name: Display runner registration status
+      debug:
+        msg:
+          - "Runner registration completed"
+          - "Runner token: {{ runner_token | default('Not created') }}"
+          - "Registration output: {{ runner_register_result.stderr | default('N/A') }}"
+      when: runner_token is defined
+
     - name: Display pipeline information
       debug:
         msg:
