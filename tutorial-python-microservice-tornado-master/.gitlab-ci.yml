@@ -9,40 +9,57 @@ variables:
 
 build:
   stage: build
-  image: docker:20.10.16
-  services:
-    - docker:20.10.16-dind
+  tags: [shell, deployment]
   script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -t $IMAGE_TAG -t $LATEST_TAG .
-    - docker push $IMAGE_TAG
-    - docker push $LATEST_TAG
+    - echo "[1/3] Login to GitLab Container Registry"
+    - echo "${K8S_REGISTRY_PASSWORD}" | docker login ${CI_REGISTRY} -u ${K8S_REGISTRY_USER} --password-stdin
+    - echo "[2/3] Building Docker image"
+    - docker build --cache-from ${LATEST_TAG} -t ${IMAGE_TAG} -t ${LATEST_TAG} . || docker build -t ${IMAGE_TAG} -t ${LATEST_TAG} .
+    - echo "[3/3] Pushing image to registry"
+    - docker push ${IMAGE_TAG}
+    - docker push ${LATEST_TAG}
 
 deploy:
   stage: deploy
+  tags: [shell, deployment]
   before_script:
-    # Use kubeconfig file already present on the runner
-    - export KUBECONFIG=/etc/gitlab-runner/kubeconfig/config
+    # Use kubeconfig already synced to gitlab-runner user
+    - export KUBECONFIG=/home/gitlab-runner/.kube/config
     - kubectl version --client
   script:
-    - echo "Deploying version $IMAGE_TAG to Kubernetes cluster"
+    - echo "Deploying version ${IMAGE_TAG} to Kubernetes cluster"
     # Create namespace if it doesn't exist
     - kubectl create namespace addrservice --dry-run=client -o yaml | kubectl apply -f -
     # Create docker registry secret for pulling images from GitLab Registry
     # Use long-lived tokens (K8S_REGISTRY_*) instead of CI_JOB_TOKEN which expires
-    - kubectl create secret docker-registry gitlab-registry 
-        --docker-server=$CI_REGISTRY 
-        --docker-username=$K8S_REGISTRY_USER 
-        --docker-password=$K8S_REGISTRY_PASSWORD 
+    - kubectl create secret docker-registry gitlab-registry
+        --docker-server=$CI_REGISTRY
+        --docker-username=${K8S_REGISTRY_USER:-root}
+        --docker-password="${K8S_REGISTRY_PASSWORD}"
         --docker-email=gitlab@example.com
         -n addrservice --dry-run=client -o yaml | kubectl apply -f -
     # Apply Kubernetes deployment manifest (with env variable substitution)
     - export CI_REGISTRY_IMAGE CI_COMMIT_SHORT_SHA
     - envsubst < k8s/deployment.yaml | kubectl apply -f -
+    # Force rollout to pick up new image
+    - kubectl rollout restart deployment/addrservice -n addrservice
     # Wait for rollout to complete
     - kubectl rollout status deployment/addrservice -n addrservice --timeout=5m
     # Display deployment info
     - kubectl get pods -n addrservice
     - kubectl get svc -n addrservice
+    # Health check
+    - |
+      for i in {1..12}; do
+        if curl -s http://localhost:30080/addresses/ > /dev/null; then
+          echo "Application is UP and healthy!"
+          exit 0
+        fi
+        echo "Waiting for application... ($i/12)"
+        sleep 5
+      done
+      echo "WARNING: Health check timed out, but deployment may still be starting"
+  environment:
+    name: production
   only:
     - main

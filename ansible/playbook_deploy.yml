@@ -56,9 +56,12 @@
       shell: |
         gitlab-rails runner "
         user = User.find_by(username: 'root')
+        # Remove existing token if it exists
+        user.personal_access_tokens.find_by(name: 'automation-token')&.revoke!
+        # Create new token with registry scope
         token = user.personal_access_tokens.create(
           name: 'automation-token',
-          scopes: ['api', 'write_repository', 'read_repository'],
+          scopes: ['api', 'write_repository', 'read_repository', 'write_registry'],
           expires_at: 365.days.from_now
         )
         puts token.token
@@ -217,6 +220,58 @@
       debug:
         var: push_result.stdout_lines
       when: push_result is defined
+
+    - name: Delete K8S_REGISTRY_USER variable if exists
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/variables/K8S_REGISTRY_USER"
+        method: DELETE
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        status_code: [204, 404]
+        validate_certs: no
+      when: api_token is defined
+      failed_when: false
+
+    - name: Create K8S_REGISTRY_USER variable
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/variables"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        body_format: json
+        body:
+          key: "K8S_REGISTRY_USER"
+          value: "{{ gitlab_user }}"
+          masked: false
+        status_code: [201]
+        validate_certs: no
+      when: api_token is defined
+
+    - name: Delete K8S_REGISTRY_PASSWORD variable if exists
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/variables/K8S_REGISTRY_PASSWORD"
+        method: DELETE
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        status_code: [204, 404]
+        validate_certs: no
+      when: api_token is defined
+      failed_when: false
+
+    - name: Create K8S_REGISTRY_PASSWORD variable
+      uri:
+        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/variables"
+        method: POST
+        headers:
+          PRIVATE-TOKEN: "{{ api_token }}"
+        body_format: json
+        body:
+          key: "K8S_REGISTRY_PASSWORD"
+          value: "{{ gitlab_password }}"
+          masked: true
+        status_code: [201]
+        validate_certs: no
+      when: api_token is defined
 
     - name: Trigger CI/CD pipeline
       uri:
