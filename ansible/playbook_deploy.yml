@@ -267,7 +267,7 @@
         body_format: json
         body:
           key: "K8S_REGISTRY_PASSWORD"
-          value: "{{ gitlab_password }}"
+          value: "{{ token_creation.stdout }}"
           masked: true
         status_code: [201]
         validate_certs: no
@@ -301,7 +301,7 @@
         body:
           runner_type: "instance_type"
           description: "Automated Shell Runner"
-          tag_list: ["shell", "docker", "automated"]
+          tag_list: ["shell", "docker", "automated", "deployment"]
           run_untagged: true
           locked: false
         status_code: [201, 400]  # 400 if runner already exists

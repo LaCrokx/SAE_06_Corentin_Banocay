@@ -190,6 +190,7 @@
         url: https://dl.k8s.io/release/v1.28.2/bin/linux/amd64/kubectl
         dest: /usr/local/bin/kubectl
         mode: '0755'
+      tags: kubectl
 
     - name: Ensure .kube directory exists for gitlab-runner
       file:
@@ -198,6 +199,7 @@
         owner: gitlab-runner
         group: gitlab-runner
         mode: '0700'
+      tags: kubectl
 
     - name: Fetch kubeconfig from k8s-master
       fetch:
@@ -205,6 +207,7 @@
         dest: /tmp/admin.conf
         flat: yes
       delegate_to: k8s-master
+      tags: kubectl
 
     - name: Copy kubeconfig to gitlab-runner home
       copy:
@@ -213,6 +216,7 @@
         owner: gitlab-runner
         group: gitlab-runner
         mode: '0600'
+      tags: kubectl
 
     - name: Auto-register GitLab Runner via gitlab-rails
       shell: |
