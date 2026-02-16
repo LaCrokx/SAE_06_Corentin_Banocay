@@ -2,8 +2,6 @@
 - name: Configure Docker Insecure Registry
   hosts: all
   become: yes
-  vars:
-    gitlab_registry_host: "{{ hostvars[groups['gitlab'][0]]['ansible_host'] }}"
   tasks:
     - name: Check if Docker is installed
       command: which docker
@@ -22,8 +20,7 @@
       copy:
         content: |
           {
-            "insecure-registries": ["gitlab.local:5050", "{{ gitlab_registry_host }}:5050", "localhost:5050"],
-            "storage-driver": "overlay2"
+            "insecure-registries": ["gitlab.local:5005", "10.129.5.71:5005"]
           }
         dest: /etc/docker/daemon.json
         mode: '0644'
@@ -33,7 +30,6 @@
     - name: Restart Docker service
       systemd:
         name: docker
-        daemon_reload: yes
         state: restarted
         enabled: yes
       when: 
@@ -51,5 +47,5 @@
 
     - name: Display configuration result
       debug:
-        msg: "Docker configured for insecure registry: gitlab.local:5050, {{ gitlab_registry_host }}:5050"
+        msg: "Docker configured for insecure registry: gitlab.local:5005, 10.129.5.71:5005"
       when: docker_check.rc == 0

@@ -2,45 +2,21 @@
 - name: Configure Containerd for Insecure Registry
   hosts: kubernetes
   become: yes
-  vars:
-    gitlab_registry_host: "{{ hostvars[groups['gitlab'][0]]['ansible_host'] }}"
   tasks:
-    - name: Create certs.d directory for GitLab registry
-      file:
-        path: "/etc/containerd/certs.d/{{ gitlab_registry_host }}:5050"
-        state: directory
-        mode: '0755'
-
-    - name: Write hosts.toml for insecure registry
-      copy:
-        dest: "/etc/containerd/certs.d/{{ gitlab_registry_host }}:5050/hosts.toml"
-        content: |
-          server = "http://{{ gitlab_registry_host }}:5050"
-          [host."http://{{ gitlab_registry_host }}:5050"]
-            capabilities = ["pull", "resolve"]
-        mode: '0644'
-      register: containerd_hosts_toml
-
-    - name: Configure containerd config_path for certs.d
-      shell: |
-        sed -i "s|config_path = .*|config_path = '/etc/containerd/certs.d'|g" /etc/containerd/config.toml
-      register: containerd_config_path
-
-    - name: Configure insecure registry mirrors in config.toml (fallback)
+    - name: Configure insecure registry in config.toml
       blockinfile:
         path: /etc/containerd/config.toml
         insertafter: '\[plugins."io.containerd.grpc.v1.cri".registry.mirrors\]'
         block: |
           
-              [plugins."io.containerd.grpc.v1.cri".registry.mirrors."gitlab.local:5050"]
-                endpoint = ["http://gitlab.local:5050"]
-              [plugins."io.containerd.grpc.v1.cri".registry.mirrors."{{ gitlab_registry_host }}:5050"]
-                endpoint = ["http://{{ gitlab_registry_host }}:5050"]
+              [plugins."io.containerd.grpc.v1.cri".registry.mirrors."gitlab.local:5005"]
+                endpoint = ["http://gitlab.local:5005"]
+              [plugins."io.containerd.grpc.v1.cri".registry.mirrors."10.129.5.71:5005"]
+                endpoint = ["http://10.129.5.71:5005"]
       register: containerd_config
 
     - name: Restart containerd
       systemd:
         name: containerd
         state: restarted
-        daemon_reload: yes
-      when: containerd_hosts_toml.changed or containerd_config.changed or containerd_config_path.changed
+      when: containerd_config.changed

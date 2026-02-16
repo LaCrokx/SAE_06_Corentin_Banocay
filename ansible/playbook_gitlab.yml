@@ -64,7 +64,7 @@
         path: /etc/gitlab/gitlab.rb
         block: |
           # Enable Container Registry
-          registry_external_url 'http://gitlab.local:5050'
+          registry_external_url 'http://gitlab.local:5005'
           gitlab_rails['registry_enabled'] = true
         marker: "# {mark} ANSIBLE MANAGED BLOCK - REGISTRY"
 
@@ -172,11 +172,12 @@
         state: started
         enabled: yes
 
-    - name: Ensure Docker service is running (already installed as Docker CE)
-      service:
-        name: docker
-        state: started
-        enabled: yes
+    - name: Install Docker for GitLab Runner executor
+      apt:
+        name:
+          - docker.io
+        state: present
+      when: false  # Skip if already installed
 
     - name: Add gitlab-runner user to docker group
       user:
@@ -184,106 +185,63 @@
         groups: docker
         append: yes
 
-    # Install kubectl for GitLab Runner
-    - name: Install kubectl
-      get_url:
-        url: https://dl.k8s.io/release/v1.28.2/bin/linux/amd64/kubectl
-        dest: /usr/local/bin/kubectl
-        mode: '0755'
-      tags: kubectl
-
-    - name: Ensure .kube directory exists for gitlab-runner
-      file:
-        path: /home/gitlab-runner/.kube
-        state: directory
-        owner: gitlab-runner
-        group: gitlab-runner
-        mode: '0700'
-      tags: kubectl
-
-    - name: Fetch kubeconfig from k8s-master
-      fetch:
-        src: /etc/kubernetes/admin.conf
-        dest: /tmp/admin.conf
-        flat: yes
-      delegate_to: k8s-master
-      tags: kubectl
-
-    - name: Copy kubeconfig to gitlab-runner home
+    - name: Create runner registration script
       copy:
-        src: /tmp/admin.conf
-        dest: /home/gitlab-runner/.kube/config
-        owner: gitlab-runner
-        group: gitlab-runner
-        mode: '0600'
-      tags: kubectl
-
-    - name: Auto-register GitLab Runner via gitlab-rails
-      shell: |
-        #!/bin/bash
-        # Get runner registration token from PostgreSQL
-        TOKEN=$(sudo -u gitlab-psql /opt/gitlab/embedded/bin/psql -h /var/opt/gitlab/postgresql -d gitlabhq_production -t -c "SELECT runners_registration_token FROM application_settings WHERE runners_registration_token IS NOT NULL ORDER BY id DESC LIMIT 1;" 2>/dev/null | tr -d ' \t\n')
-        
-        if [ -z "$TOKEN" ]; then
-          # Fallback: use gitlab-rails runner
-          TOKEN=$(timeout 60 gitlab-rails runner "puts ApplicationSetting.current.runners_registration_token" 2>/dev/null | tail -1 | tr -d ' \t\n')
-        fi
-        
-        if [ -z "$TOKEN" ]; then
-          echo "ERROR: Could not retrieve runner registration token"
-          exit 1
-        fi
-        
-        echo "Token retrieved: ${TOKEN:0:20}..."
-        
-        # Register Shell runner if not already registered
-        if ! gitlab-runner list 2>/dev/null | grep -q 'shell-runner'; then
+        dest: /tmp/register_runner.sh
+        content: |
+          #!/bin/bash
+          # GitLab Runner Registration Script
+          
+          # Check if runner is already registered
+          if gitlab-runner list 2>&1 | grep -q "shell-runner"; then
+            echo "Runner already registered"
+            exit 0
+          fi
+          
+          # Get registration token from GitLab UI:
+          # Settings > CI/CD > Runners > New instance runner
+          
+          # Replace TOKEN with your actual registration token
+          TOKEN="YOUR_REGISTRATION_TOKEN_HERE"
+          
+          # Register runner with shell executor
           gitlab-runner register \
             --non-interactive \
-            --url '{{ gitlab_external_url }}' \
+            --url "{{ gitlab_external_url }}" \
             --registration-token "$TOKEN" \
-            --executor 'shell' \
-            --description 'shell-runner' \
-            --tag-list 'shell,docker,deployment' \
-            --run-untagged
-          echo "Shell runner registered"
-        else
-          echo "Shell runner already exists"
-        fi
-        
-        # Restart the service
-        systemctl restart gitlab-runner
-        
-        # Show registered runners
-        echo "=== Registered Runners ==="
-        gitlab-runner list 2>/dev/null
-      args:
-        executable: /bin/bash
-      register: runner_registration
-      failed_when: false
-      changed_when: "'registered' in runner_registration.stdout"
-
-    - name: Display runner registration output
-      debug:
-        var: runner_registration.stdout_lines
-      when: runner_registration.stdout_lines is defined
+            --executor "shell" \
+            --description "shell-runner" \
+            --tag-list "shell,python,docker"
+          
+          echo "Runner registered successfully!"
+          echo "Check status with: gitlab-runner list"
+        mode: '0755'
 
     - name: Display GitLab setup summary
       debug:
         msg:
           - "=========================================="
-          - "GitLab CE Installation Complete!"
+          - "GitLab CE Installation Complete (Barebone)!"
           - "=========================================="
           - "GitLab URL: {{ gitlab_external_url }}"
           - "Username: root"
           - "Password: {{ gitlab_root_password.stdout | default('Check /etc/gitlab/initial_root_password') }}"
           - ""
-          - "GitLab Runner: auto-registered (shell executor)"
-          - "Tags: shell, docker, deployment"
+          - "GitLab Runner installed (Barebone)"
+          - "Executor: shell"
+          - "Registration script: /tmp/register_runner.sh"
+          - ""
+          - "Next steps:"
+          - "1. Access GitLab at {{ gitlab_external_url }}"
+          - "2. Go to Settings > CI/CD > Runners > New instance runner"
+          - "3. Copy the registration token"
+          - "4. Edit /tmp/register_runner.sh and replace YOUR_REGISTRATION_TOKEN_HERE"
+          - "5. Run: /tmp/register_runner.sh"
           - ""
           - "Useful commands:"
           - "- gitlab-ctl status"
           - "- gitlab-ctl reconfigure"
+          - "- gitlab-ctl restart"
           - "- gitlab-runner list"
           - "=========================================="
 
