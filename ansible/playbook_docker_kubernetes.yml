@@ -3,12 +3,13 @@
 - name: Install Docker on GitLab Server
   hosts: gitlab
   become: yes
+  tags: docker
   tasks:
     - name: Update apt cache
       apt:
         update_cache: yes
 
-    - name: Install Docker dependencies
+    - name: Install Docker and Utils dependencies
       apt:
         name:
           - apt-transport-https
@@ -16,7 +17,28 @@
           - curl
           - gnupg
           - lsb-release
+          - gettext-base  # For envsubst
         state: present
+
+    - name: Create keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Kubernetes GPG key
+      shell: curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Add Kubernetes repository
+      shell: echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+      args:
+        creates: /etc/apt/sources.list.d/kubernetes.list
+
+    - name: Update apt cache after adding k8s repo
+      apt:
+        update_cache: yes
 
     - name: Add Docker GPG key
       apt_key:
@@ -25,23 +47,38 @@
 
     - name: Add Docker repository
       apt_repository:
-        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_facts['distribution_release'] }} stable"
         state: present
 
-    - name: Install Docker
+    - name: Install Docker and Kubectl
       apt:
         name:
           - docker-ce
           - docker-ce-cli
           - containerd.io
+          - kubectl
         state: present
-        update_cache: yes
+
+    - name: Configure Docker daemon for insecure registry
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "insecure-registries": ["gitlab.local:5005"]
+          }
+      notify: restart docker
 
     - name: Ensure Docker service is running
       service:
         name: docker
         state: started
         enabled: yes
+
+  handlers:
+    - name: restart docker
+      service:
+        name: docker
+        state: restarted
 
     - name: Add user to docker group
       user:
@@ -165,6 +202,33 @@
   hosts: k8s_master
   become: yes
   tasks:
+    - name: Install UFW
+      apt:
+        name: ufw
+        state: present
+
+    - name: Allow SSH
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Allow Kubernetes API
+      ufw:
+        rule: allow
+        port: '6443'
+        proto: tcp
+
+    - name: Allow Flannel (UDP overlay)
+      ufw:
+        rule: allow
+        port: '8472'
+        proto: udp
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
     - name: Check if Kubernetes is already initialized
       stat:
         path: /etc/kubernetes/admin.conf
@@ -219,6 +283,39 @@
   hosts: k8s_workers
   become: yes
   tasks:
+    - name: Install UFW
+      apt:
+        name: ufw
+        state: present
+
+    - name: Allow SSH
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Allow Kubelet
+      ufw:
+        rule: allow
+        port: '10250'
+        proto: tcp
+
+    - name: Allow NodePort Range
+      ufw:
+        rule: allow
+        port: '30000:32767'
+        proto: tcp
+
+    - name: Allow Flannel (UDP overlay)
+      ufw:
+        rule: allow
+        port: '8472'
+        proto: udp
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
     - name: Check if node is already joined
       stat:
         path: /etc/kubernetes/kubelet.conf
@@ -239,3 +336,41 @@
       file:
         path: /tmp/k8s_join_command.sh
         state: absent
+
+# Playbook 5: Configure GitLab Runner Kubernetes Access
+- name: Configure GitLab Runner Kubernetes Access
+  hosts: k8s_master
+  become: yes
+  tasks:
+    - name: Fetch kubeconfig from master
+      fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: /tmp/admin.conf
+        flat: yes
+
+- name: Distribute Kubeconfig to GitLab Runner
+  hosts: gitlab
+  become: yes
+  tags: docker  # Included in docker tag for quick fixes
+  tasks:
+    - name: Ensure /etc/gitlab-runner directory permissions
+      file:
+        path: /etc/gitlab-runner
+        state: directory
+        mode: '0755'
+
+    - name: Create kubeconfig directory for gitlab-runner
+      file:
+        path: /etc/gitlab-runner/kubeconfig
+        state: directory
+        owner: gitlab-runner
+        group: gitlab-runner
+        mode: '0700'
+
+    - name: Copy kubeconfig to gitlab-runner
+      copy:
+        src: /tmp/admin.conf
+        dest: /etc/gitlab-runner/kubeconfig/config
+        owner: gitlab-runner
+        group: gitlab-runner
+        mode: '0600'

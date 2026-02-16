@@ -32,8 +32,8 @@ deploy:
     # Use long-lived tokens (K8S_REGISTRY_*) instead of CI_JOB_TOKEN which expires
     - kubectl create secret docker-registry gitlab-registry 
         --docker-server=$CI_REGISTRY 
-        --docker-username=$K8S_REGISTRY_USER 
-        --docker-password=$K8S_REGISTRY_PASSWORD 
+        --docker-username=$CI_REGISTRY_USER 
+        --docker-password=$CI_REGISTRY_PASSWORD 
         --docker-email=gitlab@example.com
         -n addrservice --dry-run=client -o yaml | kubectl apply -f -
     # Apply Kubernetes deployment manifest (with env variable substitution)
