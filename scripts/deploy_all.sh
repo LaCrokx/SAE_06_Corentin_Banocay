@@ -89,6 +89,11 @@ ansible-playbook -i inventory/hosts.ini playbook_docker_kubernetes.yml
 echo -e "${GREEN}✓ Docker and Kubernetes installed${NC}"
 
 echo ""
+echo -e "${YELLOW}Step 5b: Configuring Containerd for Insecure Registry...${NC}"
+ansible-playbook -i inventory/hosts.ini playbook_configure_containerd.yml
+echo -e "${GREEN}✓ Containerd configured${NC}"
+
+echo ""
 echo -e "${YELLOW}Step 6: Setting up DNS server...${NC}"
 ansible-playbook -i inventory/hosts.ini playbook_dns.yml
 echo -e "${GREEN}✓ DNS configured${NC}"
@@ -97,6 +102,11 @@ echo ""
 echo -e "${YELLOW}Step 7: Installing GitLab and Runner...${NC}"
 ansible-playbook -i inventory/hosts.ini playbook_gitlab.yml
 echo -e "${GREEN}✓ GitLab and Runner installed${NC}"
+
+echo ""
+echo -e "${YELLOW}Step 7b: Configuring GitLab Runner Access to Kubernetes...${NC}"
+ansible-playbook -i inventory/hosts.ini playbook_configure_k8s_access.yml
+echo -e "${GREEN}✓ GitLab Runner K8s access configured${NC}"
 
 echo ""
 echo -e "${YELLOW}Step 8: Deploying Python microservice...${NC}"
