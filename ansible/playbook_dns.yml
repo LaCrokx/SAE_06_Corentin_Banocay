@@ -1,6 +1,6 @@
 ---
-# Play 1: Setup DNS Server on GitLab VM
-- name: Setup DNS Server
+# Jeu 1 : Configuration du Serveur DNS sur la VM GitLab
+- name: Configuration du Serveur DNS
   hosts: dns_server
   become: yes
   vars:
@@ -11,30 +11,30 @@
     k8s_node2_ip: "{{ hostvars[groups['k8s_workers'][1]]['ansible_host'] }}"
   
   tasks:
-    - name: Install dnsmasq
+    - name: Installation de dnsmasq
       apt:
         name: dnsmasq
         state: present
         update_cache: yes
 
-    - name: Stop systemd-resolved (conflicts with dnsmasq)
+    - name: Arrêt de systemd-resolved (conflit avec dnsmasq)
       service:
         name: systemd-resolved
         state: stopped
         enabled: no
 
-    - name: Make resolv.conf mutable before removing
+    - name: Rendre resolv.conf modifiable avant suppression
       file:
         path: /etc/resolv.conf
         attributes: -i
       ignore_errors: yes
 
-    - name: Remove systemd-resolved stub
+    - name: Suppression du stub systemd-resolved
       file:
         path: /etc/resolv.conf
         state: absent
 
-    - name: Create new resolv.conf for DNS server
+    - name: Création d'un nouveau resolv.conf pour le serveur DNS
       copy:
         dest: /etc/resolv.conf
         content: |
@@ -42,76 +42,76 @@
           nameserver 8.8.4.4
         mode: '0644'
 
-    - name: Configure dnsmasq with custom DNS records
+    - name: Configuration de dnsmasq avec enregistrements DNS personnalisés
       copy:
         dest: /etc/dnsmasq.d/custom.conf
         content: |
-          # Enable DHCP logging
+          # Activation des logs DHCP
           log-queries
           log-dhcp
           
-          # Domain configuration
+          # Configuration du domaine
           domain={{ dns_domain }}
           expand-hosts
           
-          # DNS records for infrastructure
+          # Enregistrements DNS pour l'infrastructure
           address=/gitlab.{{ dns_domain }}/{{ gitlab_ip }}
           address=/gitlab-server.{{ dns_domain }}/{{ gitlab_ip }}
           address=/k8s-master.{{ dns_domain }}/{{ k8s_master_ip }}
           address=/k8s-node-1.{{ dns_domain }}/{{ k8s_node1_ip }}
           address=/k8s-node-2.{{ dns_domain }}/{{ k8s_node2_ip }}
           
-          # Upstream DNS servers
+          # Serveurs DNS amont
           server=8.8.8.8
           server=8.8.4.4
           
-          # Listen on all interfaces
+          # Écoute sur toutes les interfaces
           listen-address=127.0.0.1
           listen-address={{ gitlab_ip }}
           
-          # Don't forward requests for the local domain
+          # Ne pas transférer les requêtes pour le domaine local
           local=/{{ dns_domain }}/
         mode: '0644'
       register: dnsmasq_config
 
-    - name: Configure dnsmasq main config
+    - name: Configuration principale de dnsmasq
       lineinfile:
         path: /etc/dnsmasq.conf
         regexp: '^#?conf-dir='
         line: 'conf-dir=/etc/dnsmasq.d/,*.conf'
         state: present
 
-    - name: Restart dnsmasq service
+    - name: Redémarrage du service dnsmasq
       service:
         name: dnsmasq
         state: restarted
         enabled: yes
       when: dnsmasq_config.changed
 
-    - name: Ensure dnsmasq is running
+    - name: Assurance que dnsmasq est démarré
       service:
         name: dnsmasq
         state: started
         enabled: yes
 
-    - name: Wait for dnsmasq to be ready
+    - name: Attente de la disponibilité de dnsmasq
       wait_for:
         port: 53
         host: "{{ gitlab_ip }}"
         timeout: 30
 
-    - name: Test DNS resolution locally
+    - name: Test de la résolution DNS locale
       command: nslookup gitlab.{{ dns_domain }} 127.0.0.1
       register: dns_test
       changed_when: false
       failed_when: false
 
-    - name: Display DNS test result
+    - name: Affichage du résultat du test DNS
       debug:
         var: dns_test.stdout_lines
 
-# Play 2: Configure DNS clients on all VMs
-- name: Configure DNS Clients
+# Jeu 2 : Configuration des clients DNS sur toutes les VMs
+- name: Configuration des Clients DNS
   hosts: all
   become: yes
   vars:
@@ -119,25 +119,25 @@
     dns_domain: "local"
   
   tasks:
-    - name: Stop systemd-resolved on clients
+    - name: Arrêt de systemd-resolved sur les clients
       service:
         name: systemd-resolved
         state: stopped
         enabled: no
       failed_when: false
 
-    - name: Make resolv.conf mutable before removing
+    - name: Rendre resolv.conf modifiable avant suppression
       file:
         path: /etc/resolv.conf
         attributes: -i
       ignore_errors: yes
 
-    - name: Remove existing resolv.conf
+    - name: Suppression du resolv.conf existant
       file:
         path: /etc/resolv.conf
         state: absent
 
-    - name: Create new resolv.conf pointing to DNS server
+    - name: Création d'un nouveau resolv.conf pointant vers le serveur DNS
       copy:
         dest: /etc/resolv.conf
         content: |
@@ -146,13 +146,13 @@
           options ndots:1
         mode: '0644'
 
-    - name: Make resolv.conf immutable (prevent overwrite)
+    - name: Rendre resolv.conf immuable (empêcher l'écrasement)
       file:
         path: /etc/resolv.conf
         attributes: +i
       ignore_errors: yes
 
-    - name: Install DNS utilities for testing
+    - name: Installation des utilitaires DNS pour les tests
       apt:
         name:
           - dnsutils
@@ -160,30 +160,30 @@
         state: present
         update_cache: yes
 
-    - name: Test DNS resolution to GitLab
+    - name: Test de la résolution DNS vers GitLab
       command: nslookup gitlab.{{ dns_domain }}
       register: gitlab_dns
       changed_when: false
       failed_when: false
 
-    - name: Test DNS resolution to K8s master
+    - name: Test de la résolution DNS vers K8s master
       command: nslookup k8s-master.{{ dns_domain }}
       register: k8s_dns
       changed_when: false
       failed_when: false
 
-    - name: Display DNS test results
+    - name: Affichage des résultats des tests DNS
       debug:
         msg:
-          - "GitLab DNS: {{ gitlab_dns.stdout }}"
-          - "K8s Master DNS: {{ k8s_dns.stdout }}"
+          - "DNS GitLab : {{ gitlab_dns.stdout }}"
+          - "DNS K8s Master : {{ k8s_dns.stdout }}"
 
-    - name: Test ping to GitLab via hostname
+    - name: Test de ping vers GitLab via le nom d'hôte
       command: ping -c 2 gitlab.{{ dns_domain }}
       register: ping_test
       changed_when: false
       failed_when: false
 
-    - name: Display ping results
+    - name: Affichage des résultats du ping
       debug:
         var: ping_test.stdout_lines

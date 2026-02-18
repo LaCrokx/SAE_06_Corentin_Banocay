@@ -1,22 +1,22 @@
-- name: Automate GitLab Configuration (Deploy Tokens & Variables)
+- name: Automatisation de la Configuration GitLab (Tokens de Déploiement & Variables)
   hosts: gitlab
   become: yes
   tasks:
-    - name: Wait for GitLab to be ready
-      command: gitlab-rails runner "puts 'GitLab is ready'"
+    - name: Attente que GitLab soit prêt
+      command: gitlab-rails runner "puts 'GitLab est prêt'"
       register: gitlab_ready
       until: gitlab_ready.rc == 0
       retries: 20
       delay: 15
 
-    - name: Create Deploy Token and Variables via Rails Runner
+    - name: Création du Token de Déploiement et des Variables via Rails Runner
       command: |
         gitlab-rails runner "
           project_path = 'root/python-microservice-tornado'
           project = Project.find_by_full_path(project_path)
           
           if project
-            # 1. Create Deploy Token
+            # 1. Création du Token de Déploiement
             token_name = 'k8s-deploy-token'
             deploy_token = project.deploy_tokens.find_by(name: token_name)
             
@@ -32,13 +32,13 @@
               puts 'Deploy Token already exists.'
             end
 
-            # 2. Set CI/CD Variables
+            # 2. Définition des Variables CI/CD
             def set_variable(project, key, value)
               variable = project.variables.find_or_initialize_by(key: key)
               variable.update!(value: value, masked: false, protected: false)
             end
 
-            # Only update variables if we have the token (newly created or retrieved)
+            # Mise à jour des variables uniquement si nous avons le token (nouvellement créé ou récupéré)
             if deploy_token
               set_variable(project, 'K8S_REGISTRY_USER', deploy_token.username)
               set_variable(project, 'K8S_REGISTRY_PASSWORD', deploy_token.token)
@@ -53,6 +53,6 @@
       changed_when: "'Deploy Token created' in rails_output.stdout or 'CI/CD Variables updated' in rails_output.stdout"
       failed_when: "'Project not found' in rails_output.stdout or rails_output.rc != 0"
 
-    - name: Display Rails Runner Output
+    - name: Affichage de la sortie du Rails Runner
       debug:
         msg: "{{ rails_output.stdout_lines }}"

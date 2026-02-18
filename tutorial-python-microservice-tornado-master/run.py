@@ -13,49 +13,49 @@ ALL_CODE = SOURCE_CODE + TEST_CODE
 
 def arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description='Run linter, static type checker, tests'
+        description='Exécuter le linter, le vérificateur de type statique et les tests'
     )
 
-    subparsers = parser.add_subparsers(dest='func', help='sub-commands')
+    subparsers = parser.add_subparsers(dest='func', help='sous-commandes')
 
-    typechecker_cmd_parser = subparsers.add_parser('typecheck')
+    typechecker_cmd_parser = subparsers.add_parser('typecheck', help='Vérification de type')
     typechecker_cmd_parser.add_argument(
         '-c', '--checker',
         default='mypy',
-        help='specify static type checker, default: %(default)s'
+        help='spécifier le vérificateur de type statique, défaut : %(default)s'
     )
     typechecker_cmd_parser.add_argument(
         'paths',
         nargs='*',
         default=ALL_CODE,
-        help='directories and files to check'
+        help='répertoires et fichiers à vérifier'
     )
 
-    lint_cmd_parser = subparsers.add_parser('lint')
+    lint_cmd_parser = subparsers.add_parser('lint', help='Linting du code')
     lint_cmd_parser.add_argument(
         '-l', '--linter',
         default='flake8',
-        help='specify linter, default: %(default)s'
+        help='spécifier le linter, défaut : %(default)s'
     )
     lint_cmd_parser.add_argument(
         'paths',
         nargs='*',
         default=ALL_CODE,
-        help='directories and files to check'
+        help='répertoires et fichiers à vérifier'
     )
 
-    test_cmd_parser = subparsers.add_parser('test')
+    test_cmd_parser = subparsers.add_parser('test', help='Exécution des tests')
     test_cmd_parser.add_argument(
         '--suite',
         choices=['all', 'unit', 'integration'],
         default='all',
         type=str,
-        help='test suite to run, default: %(default)s'
+        help='suite de tests à exécuter, défaut : %(default)s'
     )
     test_cmd_parser.add_argument(
         '-v', '--verbose',
         action='store_true',
-        help='turn on verbose output'
+        help='activer la sortie détaillée'
     )
 
     return parser

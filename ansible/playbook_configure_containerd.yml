@@ -1,9 +1,9 @@
 ---
-- name: Configure Containerd for Insecure Registry
+- name: Configuration de Containerd pour Registre Non Sécurisé
   hosts: kubernetes
   become: yes
   tasks:
-    - name: Configure insecure registry in config.toml
+    - name: Configuration du registre non sécurisé dans config.toml
       blockinfile:
         path: /etc/containerd/config.toml
         insertafter: '\[plugins."io.containerd.grpc.v1.cri".registry.mirrors\]'
@@ -15,7 +15,7 @@
                 endpoint = ["http://10.129.5.71:5005"]
       register: containerd_config
 
-    - name: Restart containerd
+    - name: Redémarrage de containerd
       systemd:
         name: containerd
         state: restarted

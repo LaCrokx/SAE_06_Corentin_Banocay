@@ -1,25 +1,25 @@
 ---
-- name: Configure GitLab Runner Kubernetes Access
+- name: Configuration de l'accès Kubernetes pour le Runner GitLab
   hosts: k8s_master
   become: yes
   tasks:
-    - name: Fetch kubeconfig from master
+    - name: Récupération de kubeconfig depuis le master
       fetch:
         src: /etc/kubernetes/admin.conf
         dest: /tmp/admin.conf
         flat: yes
 
-- name: Distribute Kubeconfig to GitLab Runner
+- name: Distribution de Kubeconfig au Runner GitLab
   hosts: gitlab
   become: yes
   tasks:
-    - name: Ensure /etc/gitlab-runner directory permissions
+    - name: Assurance des permissions du répertoire /etc/gitlab-runner
       file:
         path: /etc/gitlab-runner
         state: directory
         mode: '0755'
 
-    - name: Create kubeconfig directory for gitlab-runner
+    - name: Création du répertoire kubeconfig pour gitlab-runner
       file:
         path: /etc/gitlab-runner/kubeconfig
         state: directory
@@ -27,7 +27,7 @@
         group: gitlab-runner
         mode: '0700'
 
-    - name: Copy kubeconfig to gitlab-runner
+    - name: Copie de kubeconfig pour gitlab-runner
       copy:
         src: /tmp/admin.conf
         dest: /etc/gitlab-runner/kubeconfig/config

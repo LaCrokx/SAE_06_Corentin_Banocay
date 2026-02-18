@@ -1,5 +1,5 @@
 ---
-- name: Deploy GitLab CE and GitLab Runner (Barebone Installation)
+- name: Déploiement de GitLab CE et GitLab Runner (Installation Barebone)
   hosts: gitlab
   become: yes
   vars:
@@ -7,8 +7,8 @@
     gitlab_edition: "gitlab-ce"
   
   tasks:
-    # Install GitLab CE Prerequisites
-    - name: Install GitLab dependencies
+    # Installation des prérequis GitLab CE
+    - name: Installation des dépendances GitLab
       apt:
         name:
           - curl
@@ -20,7 +20,7 @@
         state: present
         update_cache: yes
 
-    - name: Configure Postfix for local delivery
+    - name: Configuration de Postfix pour la livraison locale
       debconf:
         name: postfix
         question: "{{ item.question }}"
@@ -31,20 +31,20 @@
         - { question: 'postfix/mailname', value: 'gitlab.local', vtype: 'string' }
       notify: restart postfix
 
-    # Add GitLab Repository
-    - name: Add GitLab repository script
+    # Ajout du dépôt GitLab
+    - name: Ajout du script du dépôt GitLab
       get_url:
         url: https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh
         dest: /tmp/gitlab_install.sh
         mode: '0755'
 
-    - name: Run GitLab repository setup script
+    - name: Exécution du script d'installation du dépôt GitLab
       command: bash /tmp/gitlab_install.sh
       args:
         creates: /etc/apt/sources.list.d/gitlab_gitlab-ce.list
 
-    # Install GitLab CE
-    - name: Install GitLab CE package
+    # Installation de GitLab CE
+    - name: Installation du paquet GitLab CE
       apt:
         name: gitlab-ce
         state: present
@@ -52,28 +52,28 @@
       environment:
         EXTERNAL_URL: "{{ gitlab_external_url }}"
 
-    - name: Configure GitLab external URL
+    - name: Configuration de l'URL externe de GitLab
       lineinfile:
         path: /etc/gitlab/gitlab.rb
         regexp: '^external_url'
         line: "external_url '{{ gitlab_external_url }}'"
         create: yes
 
-    - name: Enable GitLab Container Registry
+    - name: Activation du Registre de Conteneurs GitLab
       blockinfile:
         path: /etc/gitlab/gitlab.rb
         block: |
-          # Enable Container Registry
+          # Activation du Container Registry
           registry_external_url 'http://gitlab.local:5005'
           gitlab_rails['registry_enabled'] = true
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - REGISTRY"
+        marker: "# {mark} BLOC GÉRÉ PAR ANSIBLE - REGISTRY"
 
-    - name: Reconfigure GitLab
+    - name: Reconfiguration de GitLab
       command: gitlab-ctl reconfigure
       register: gitlab_reconfigure
       changed_when: "'gitlab Reconfigured!' in gitlab_reconfigure.stdout"
 
-    - name: Wait for Puma (web server) to be fully started
+    - name: Attente du démarrage complet de Puma (serveur web)
       shell: gitlab-ctl status puma | grep '^run:'
       register: puma_status
       until: puma_status.rc == 0
@@ -81,7 +81,7 @@
       delay: 10
       changed_when: false
 
-    - name: Wait for GitLab web interface to be ready
+    - name: Attente de la disponibilité de l'interface web GitLab
       uri:
         url: "http://127.0.0.1/"
         status_code: 200,302
@@ -92,7 +92,7 @@
       retries: 30
       delay: 10
 
-    - name: Check GitLab readiness endpoint
+    - name: Vérification du endpoint readiness de GitLab
       uri:
         url: "http://127.0.0.1/-/readiness"
         status_code: 200
@@ -103,108 +103,108 @@
       delay: 5
       failed_when: false
 
-    - name: Display GitLab status
+    - name: Affichage du statut de GitLab
       command: gitlab-ctl status
       register: gitlab_status
       changed_when: false
 
-    - name: Show GitLab status
+    - name: Affichage du statut de GitLab (debug)
       debug:
         var: gitlab_status.stdout_lines
 
-    - name: Check if initial root password file exists
+    - name: Vérification de l'existence du fichier de mot de passe root initial
       stat:
         path: /etc/gitlab/initial_root_password
       register: password_file
 
-    - name: Get GitLab initial root password
+    - name: Récupération du mot de passe root initial de GitLab
       shell: grep 'Password:' /etc/gitlab/initial_root_password | awk '{print $2}'
       register: gitlab_root_password
       when: password_file.stat.exists
       changed_when: false
 
-    - name: Save root password to file
+    - name: Sauvegarde du mot de passe root dans un fichier
       copy:
         content: |
-          GitLab Root Credentials:
-          Username: root
-          Password: {{ gitlab_root_password.stdout }}
-          URL: {{ gitlab_external_url }}
+          Identifiants Root GitLab :
+          Utilisateur : root
+          Mot de passe : {{ gitlab_root_password.stdout }}
+          URL : {{ gitlab_external_url }}
           
-          Installation Type: Barebone (Native Package)
-          Config: /etc/gitlab/gitlab.rb
+          Type d'installation : Barebone (Paquet Natif)
+          Config : /etc/gitlab/gitlab.rb
           
-          Commands:
-          - Check status: gitlab-ctl status
-          - Reconfigure: gitlab-ctl reconfigure
-          - Restart: gitlab-ctl restart
-          - Logs: gitlab-ctl tail
+          Commandes utiles :
+          - Vérifier le statut : gitlab-ctl status
+          - Reconfigurer : gitlab-ctl reconfigure
+          - Redémarrer : gitlab-ctl restart
+          - Logs : gitlab-ctl tail
         dest: /root/gitlab_credentials.txt
         mode: '0600'
       when: password_file.stat.exists
 
-    - name: Display GitLab root password
+    - name: Affichage du mot de passe root GitLab
       debug:
-        msg: "GitLab root password: {{ gitlab_root_password.stdout }}"
+        msg: "Mot de passe root GitLab : {{ gitlab_root_password.stdout }}"
       when: password_file.stat.exists
 
-    # Install GitLab Runner (Barebone)
-    - name: Download GitLab Runner repository script
+    # Installation de GitLab Runner (Barebone)
+    - name: Téléchargement du script du dépôt GitLab Runner
       get_url:
         url: https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh
         dest: /tmp/gitlab_runner_install.sh
         mode: '0755'
 
-    - name: Run GitLab Runner repository setup script
+    - name: Exécution du script d'installation du dépôt GitLab Runner
       command: bash /tmp/gitlab_runner_install.sh
       args:
         creates: /etc/apt/sources.list.d/runner_gitlab-runner.list
 
-    - name: Install GitLab Runner package
+    - name: Installation du paquet GitLab Runner
       apt:
         name: gitlab-runner
         state: present
         update_cache: yes
 
-    - name: Ensure GitLab Runner service is running
+    - name: Assurance que le service GitLab Runner est démarré
       service:
         name: gitlab-runner
         state: started
         enabled: yes
 
-    - name: Install Docker for GitLab Runner executor
+    - name: Installation de Docker pour l'exécuteur GitLab Runner
       apt:
         name:
           - docker.io
         state: present
-      when: false  # Skip if already installed
+      when: false  # Ignorer si déjà installé
 
-    - name: Add gitlab-runner user to docker group
+    - name: Ajout de l'utilisateur gitlab-runner au groupe docker
       user:
         name: gitlab-runner
         groups: docker
         append: yes
 
-    - name: Create runner registration script
+    - name: Création du script d'enregistrement du runner
       copy:
         dest: /tmp/register_runner.sh
         content: |
           #!/bin/bash
-          # GitLab Runner Registration Script
+          # Script d'enregistrement GitLab Runner
           
-          # Check if runner is already registered
+          # Vérifier si le runner est déjà enregistré
           if gitlab-runner list 2>&1 | grep -q "shell-runner"; then
-            echo "Runner already registered"
+            echo "Runner déjà enregistré"
             exit 0
           fi
           
-          # Get registration token from GitLab UI:
-          # Settings > CI/CD > Runners > New instance runner
+          # Récupérer le token d'enregistrement depuis l'interface GitLab :
+          # Paramètres > CI/CD > Runners > Nouveau runner d'instance
           
-          # Replace TOKEN with your actual registration token
-          TOKEN="YOUR_REGISTRATION_TOKEN_HERE"
+          # Remplacez TOKEN par votre token d'enregistrement réel
+          TOKEN="VOTRE_TOKEN_ENREGISTREMENT_ICI"
           
-          # Register runner with shell executor
+          # Enregistrer le runner avec l'exécuteur shell
           gitlab-runner register \
             --non-interactive \
             --url "{{ gitlab_external_url }}" \
@@ -213,32 +213,32 @@
             --description "shell-runner" \
             --tag-list "shell,python,docker"
           
-          echo "Runner registered successfully!"
-          echo "Check status with: gitlab-runner list"
+          echo "Runner enregistré avec succès !"
+          echo "Vérifiez le statut avec : gitlab-runner list"
         mode: '0755'
 
-    - name: Display GitLab setup summary
+    - name: Affichage du résumé de l'installation GitLab
       debug:
         msg:
           - "=========================================="
-          - "GitLab CE Installation Complete (Barebone)!"
+          - "Installation de GitLab CE terminée (Barebone) !"
           - "=========================================="
-          - "GitLab URL: {{ gitlab_external_url }}"
-          - "Username: root"
-          - "Password: {{ gitlab_root_password.stdout | default('Check /etc/gitlab/initial_root_password') }}"
+          - "URL GitLab : {{ gitlab_external_url }}"
+          - "Utilisateur : root"
+          - "Mot de passe : {{ gitlab_root_password.stdout | default('Vérifiez /etc/gitlab/initial_root_password') }}"
           - ""
-          - "GitLab Runner installed (Barebone)"
-          - "Executor: shell"
-          - "Registration script: /tmp/register_runner.sh"
+          - "GitLab Runner installé (Barebone)"
+          - "Exécuteur : shell"
+          - "Script d'enregistrement : /tmp/register_runner.sh"
           - ""
-          - "Next steps:"
-          - "1. Access GitLab at {{ gitlab_external_url }}"
-          - "2. Go to Settings > CI/CD > Runners > New instance runner"
-          - "3. Copy the registration token"
-          - "4. Edit /tmp/register_runner.sh and replace YOUR_REGISTRATION_TOKEN_HERE"
-          - "5. Run: /tmp/register_runner.sh"
+          - "Prochaines étapes :"
+          - "1. Accédez à GitLab sur {{ gitlab_external_url }}"
+          - "2. Allez dans Paramètres > CI/CD > Runners > Nouveau runner d'instance"
+          - "3. Copiez le token d'enregistrement"
+          - "4. Éditez /tmp/register_runner.sh et remplacez VOTRE_TOKEN_ENREGISTREMENT_ICI"
+          - "5. Lancez : /tmp/register_runner.sh"
           - ""
-          - "Useful commands:"
+          - "Commandes utiles :"
           - "- gitlab-ctl status"
           - "- gitlab-ctl reconfigure"
           - "- gitlab-ctl restart"

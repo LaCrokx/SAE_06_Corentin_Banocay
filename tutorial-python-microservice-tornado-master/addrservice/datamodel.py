@@ -10,7 +10,7 @@ from typing import (
 )
 
 
-VALUE_ERR_MSG = '{} has invalid value {}'
+VALUE_ERR_MSG = '{} a une valeur invalide {}'
 
 
 @unique
@@ -128,7 +128,7 @@ class Address:
 
     @city.setter
     def city(self, value: str) -> None:
-        self._ = value
+        self._city = value
 
     @property
     def province(self) -> Optional[str]:
@@ -240,7 +240,7 @@ class Phone:
 
     @area_code.setter
     def area_code(self, value: int) -> None:
-        self._ = value
+        self._area_code = value
 
     @property
     def local_number(self) -> int:

@@ -1,22 +1,22 @@
 ---
-- name: Configure Docker Insecure Registry
+- name: Configuration du Registre Docker Non Sécurisé
   hosts: all
   become: yes
   tasks:
-    - name: Check if Docker is installed
+    - name: Vérification de l'installation de Docker
       command: which docker
       register: docker_check
       failed_when: false
       changed_when: false
 
-    - name: Create /etc/docker directory if it doesn't exist
+    - name: Création du répertoire /etc/docker s'il n'existe pas
       file:
         path: /etc/docker
         state: directory
         mode: '0755'
       when: docker_check.rc == 0
 
-    - name: Configure Docker daemon for insecure registry
+    - name: Configuration du démon Docker pour registre non sécurisé
       copy:
         content: |
           {
@@ -27,7 +27,7 @@
       when: docker_check.rc == 0
       register: docker_config
 
-    - name: Restart Docker service
+    - name: Redémarrage du service Docker
       systemd:
         name: docker
         state: restarted
@@ -36,7 +36,7 @@
         - docker_check.rc == 0
         - docker_config.changed
 
-    - name: Restart GitLab Runner if present
+    - name: Redémarrage du Runner GitLab si présent
       systemd:
         name: gitlab-runner
         state: restarted
@@ -45,7 +45,7 @@
         - docker_config.changed
       failed_when: false
 
-    - name: Display configuration result
+    - name: Affichage du résultat de la configuration
       debug:
-        msg: "Docker configured for insecure registry: gitlab.local:5005, 10.129.5.71:5005"
+        msg: "Docker configuré pour le registre non sécurisé : gitlab.local:5005, 10.129.5.71:5005"
       when: docker_check.rc == 0

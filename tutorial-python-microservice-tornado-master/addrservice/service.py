@@ -28,7 +28,7 @@ class AddressBookService:
         try:
             jsonschema.validate(addr, ADDRESS_BOOK_SCHEMA)
         except jsonschema.exceptions.ValidationError:
-            raise ValueError('JSON Schema validation failed')
+            raise ValueError('Échec de la validation du schéma JSON')
 
     async def create_address(self, value: Mapping) -> str:
         self.validate_address(value)

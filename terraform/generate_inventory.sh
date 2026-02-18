@@ -1,34 +1,34 @@
 #!/bin/bash
-# Generate Ansible inventory from Terraform outputs
+# Génère l'inventaire Ansible à partir des outputs Terraform
 
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-echo "Generating Ansible inventory from Terraform outputs..."
+echo "Génération de l'inventaire Ansible depuis Terraform..."
 
-# Check if we need jq
+# Vérification de la présence de jq
 if ! command -v jq &> /dev/null; then
-    echo "Warning: jq not found. Installing is recommended for better JSON parsing."
-    echo "Install with: brew install jq"
+    echo "Attention : jq n'est pas installé. Son installation est recommandée pour un meilleur parsing JSON."
+    echo "Installation via Homebrew : brew install jq"
 fi
 
-# Get outputs from Terraform
+# Récupération des outputs Terraform
 GITLAB_IP=$(terraform output -raw gitlab_ip 2>/dev/null || echo "")
 K8S_NODE_1_IP=$(terraform output -json k8s_node_ips 2>/dev/null | jq -r '."k8s-node-1"' 2>/dev/null || echo "")
 K8S_NODE_2_IP=$(terraform output -json k8s_node_ips 2>/dev/null | jq -r '."k8s-node-2"' 2>/dev/null || echo "")
 K8S_NODE_3_IP=$(terraform output -json k8s_node_ips 2>/dev/null | jq -r '."k8s-node-3"' 2>/dev/null || echo "")
 
 if [ -z "$GITLAB_IP" ] || [ -z "$K8S_NODE_1_IP" ]; then
-    echo "Error: Could not get Terraform outputs. Make sure terraform apply has been run."
+    echo "Erreur : Impossible de récupérer les outputs Terraform. Assurez-vous que 'terraform apply' a été exécuté avec succès."
     exit 1
 fi
 
-# Generate inventory file
+# Génération du fichier d'inventaire
 cat > ../ansible/inventory/hosts.ini <<EOF
-# Auto-generated inventory from Terraform outputs
-# Generated on: $(date)
+# Inventaire auto-généré depuis les outputs Terraform
+# Généré le : $(date)
 
 [gitlab]
 gitlab-server ansible_host=${GITLAB_IP} ansible_user=root
@@ -52,10 +52,11 @@ ansible_python_interpreter=/usr/bin/python3
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 EOF
 
-echo "✓ Inventory generated successfully at ../ansible/inventory/hosts.ini"
+echo "✓ Inventaire généré avec succès dans ../ansible/inventory/hosts.ini"
 echo ""
-echo "Generated IPs:"
-echo "  GitLab: ${GITLAB_IP}"
-echo "  K8s Master (k8s-node-1): ${K8S_NODE_1_IP}"
-echo "  K8s Worker 1 (k8s-node-2): ${K8S_NODE_2_IP}"
-echo "  K8s Worker 2 (k8s-node-3): ${K8S_NODE_3_IP}"
+echo "Adresses IP récupérées :"
+echo "  GitLab : ${GITLAB_IP}"
+echo "  K8s Master (k8s-node-1) : ${K8S_NODE_1_IP}"
+echo "  K8s Worker 1 (k8s-node-2) : ${K8S_NODE_2_IP}"
+echo "  K8s Worker 2 (k8s-node-3) : ${K8S_NODE_3_IP}"
+
