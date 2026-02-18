@@ -1,6 +1,13 @@
 stages:
+  - lint
   - build
   - deploy
+
+hadolint:
+  stage: lint
+  script:
+    - docker run --rm -v "$(pwd):/app" -w /app hadolint/hadolint hadolint Dockerfile
+
 
 variables:
   # Tag image with short commit SHA for unique versioning

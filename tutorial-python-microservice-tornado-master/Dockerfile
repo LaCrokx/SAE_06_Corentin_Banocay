@@ -19,7 +19,7 @@ COPY requirements.txt .
 
 # Install Python dependencies
 # --no-cache-dir to keep image small
-RUN pip install --upgrade pip wheel setuptools && \
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools && \
     pip install --no-cache-dir --no-build-isolation -r requirements.txt
 
 # Copy project files
