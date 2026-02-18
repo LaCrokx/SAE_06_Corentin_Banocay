@@ -115,6 +115,8 @@ echo -e "${GREEN}✓ Application deployed${NC}"
 
 # Get final IPs
 GITLAB_IP=$(cd ../terraform && terraform output -raw gitlab_ip)
+K8S_MASTER_IP=$(cd ../terraform && terraform output -json k8s_node_ips | jq -r '."k8s-node-1"')
+GITLAB_PASSWORD=$(ssh -o StrictHostKeyChecking=no root@${GITLAB_IP} "grep 'Password:' /root/gitlab_credentials.txt | awk '{print \$2}'")
 
 echo ""
 echo "=========================================="
@@ -122,13 +124,14 @@ echo -e "${GREEN}Infrastructure Setup Complete!${NC}"
 echo "=========================================="
 echo ""
 echo "Access your services:"
-echo "  - GitLab: http://${GITLAB_IP}"
-echo "  - or: http://gitlab.local (if DNS is configured on your machine)"
+echo "  - GitLab URL: http://${GITLAB_IP}"
+echo "  - Username:   root"
+echo "  - Password:   ${GITLAB_PASSWORD}"
+echo ""
+echo "  - Application: http://${K8S_MASTER_IP}:30080/addresses"
 echo ""
 echo "Next steps:"
 echo "  1. Access GitLab and login with root credentials"
-echo "  2. Get credentials: ssh root@${GITLAB_IP} 'cat /root/gitlab_credentials.txt'"
-echo "  3. Register GitLab Runner (check /tmp/register_runner.sh on GitLab VM)"
-echo "  4. Monitor CI/CD pipeline"
-echo "  5. Check Kubernetes cluster status"
+echo "  2. Monitor CI/CD pipeline: http://${GITLAB_IP}/root/python-microservice-tornado/-/pipelines"
+echo "  3. Check Kubernetes cluster status"
 echo ""
