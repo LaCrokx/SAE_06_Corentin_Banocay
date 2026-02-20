@@ -1,10 +1,10 @@
-resource "terraform_data" "always_run" {
+resource "terraform_data" "timestamp_trigger" {
   input = timestamp()
 }
 
-resource "proxmox_vm_qemu" "gitlab_vm" {
+resource "proxmox_vm_qemu" "srv_gitlab" {
   lifecycle {
-    replace_triggered_by = [terraform_data.always_run]
+    replace_triggered_by = [terraform_data.timestamp_trigger]
   }
   name        = "gitlab-server"
   target_node = var.target_node
@@ -51,17 +51,17 @@ resource "proxmox_vm_qemu" "gitlab_vm" {
   }
 
   ipconfig0  = "ip=dhcp"
-  ciuser     = var.vm_user
-  cipassword = var.vm_password
+  ciuser     = var.admin_account
+  cipassword = var.admin_auth
 
   sshkeys = <<EOF
   ${var.ssh_key}
   EOF
 }
 
-resource "proxmox_vm_qemu" "k8s_nodes" {
+resource "proxmox_vm_qemu" "cluster_nodes" {
   lifecycle {
-    replace_triggered_by = [terraform_data.always_run]
+    replace_triggered_by = [terraform_data.timestamp_trigger]
   }
   count       = 3
   name        = "k8s-node-${count.index + 1}"
@@ -109,8 +109,8 @@ resource "proxmox_vm_qemu" "k8s_nodes" {
   }
 
   ipconfig0  = "ip=dhcp"
-  ciuser     = var.vm_user
-  cipassword = var.vm_password
+  ciuser     = var.admin_account
+  cipassword = var.admin_auth
 
   sshkeys = <<EOF
   ${var.ssh_key}

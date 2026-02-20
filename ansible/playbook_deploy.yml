@@ -1,21 +1,20 @@
 ---
-- name: Déploiement du Microservice Python sur GitLab
+- name: Automatisering du déploiement Microservice
   hosts: gitlab
   gather_facts: no
   vars:
-    gitlab_host: "{{ ansible_host }}"
-    gitlab_url: "http://127.0.0.1"  # Accès GitLab localement sur la VM
-    project_name: "python-microservice-tornado"
-    project_path: "root/{{ project_name }}"
-    local_repo_path: "/tmp/{{ project_name }}"
-    source_path: "/tmp/microservice-source"  # Sera copié ici d'abord
-    gitlab_user: "root"
+    gl_local_url: "http://127.0.0.1"
+    app_identifier: "python-microservice-tornado"
+    repo_path: "root/{{ app_identifier }}"
+    temp_git_dir: "/tmp/{{ app_identifier }}"
+    src_dir: "/tmp/microservice-source"
+    admin_user: "root"
     
   tasks:
-    - name: Copie des fichiers sources du microservice vers la VM GitLab
+    - name: Transfert des sources vers l'instance GitLab
       synchronize:
         src: "{{ playbook_dir }}/../tutorial-python-microservice-tornado-master/"
-        dest: "{{ source_path }}/"
+        dest: "{{ src_dir }}/"
         recursive: yes
         delete: no
         rsync_opts:
@@ -24,330 +23,320 @@
           - "--exclude=__pycache__"
           - "--exclude=*.pyc"
 
-    - name: Attente de l'accessibilité de GitLab
+    - name: Vérification de la disponibilité du service Web GitLab
       uri:
-        url: "{{ gitlab_url}}/"
+        url: "{{ gl_local_url }}/"
         status_code: 200,302
         timeout: 10
         follow_redirects: none
-      register: gitlab_ready
-      until: gitlab_ready.status in [200, 302]
+      register: gl_service_check
+      until: gl_service_check.status in [200, 302]
       retries: 30
       delay: 10
 
-    - name: Récupération du mot de passe root GitLab (installation barebone)
+    - name: Extraction du mot de passe administrateur initial
       shell: grep 'Password:' /etc/gitlab/initial_root_password 2>/dev/null | awk '{print $2}' || grep Password /root/gitlab_credentials.txt 2>/dev/null | awk '{print $2}'
-      register: gitlab_password_result
+      register: admin_pass_raw
       changed_when: false
       failed_when: false
 
-    - name: Définition du fait gitlab_password
+    - name: Enregistrement du mot de passe
       set_fact:
-        gitlab_password: "{{ gitlab_password_result.stdout | trim }}"
+        gl_root_password: "{{ admin_pass_raw.stdout | trim }}"
 
-    - name: Affichage des identifiants GitLab
+    - name: Debug des identifiants (interne)
       debug:
         msg:
-          - "URL GitLab : {{ gitlab_url }}"
-          - "Utilisateur : {{ gitlab_user }}"
-          - "Mot de passe : {{ gitlab_password }}"
+          - "Endpoint : {{ gl_local_url }}"
+          - "Utilisateur : {{ admin_user }}"
+          - "Pwd : {{ gl_root_password }}"
 
-    - name: Création d'un Personal Access Token GitLab via la console Rails
+    - name: Génération du Token d'accès via Rails console
       shell: |
         gitlab-rails runner "
-        user = User.find_by(username: 'root')
-        token = user.personal_access_tokens.create(
-          name: 'automation-token',
+        u = User.find_by(username: 'root')
+        t = u.personal_access_tokens.create(
+          name: 'deploy-token',
           scopes: ['api', 'write_repository', 'read_repository'],
           expires_at: 365.days.from_now
         )
-        puts token.token
+        puts t.token
         " 2>/dev/null | tail -1
-      register: token_creation
+      register: token_output
       changed_when: false
       failed_when: false
 
-    - name: Définition du token API
+    - name: Stockage du Token API
       set_fact:
-        api_token: "{{ token_creation.stdout | trim }}"
-      when: token_creation.stdout is defined and token_creation.stdout != ""
+        api_access_token: "{{ token_output.stdout | trim }}"
+      when: token_output.stdout is defined and token_output.stdout != ""
 
-    - name: Vérification de l'existence du projet
+    - name: Audit existence du projet
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects/{{ project_path | urlencode }}"
+        url: "{{ gl_local_url }}/api/v4/projects/{{ repo_path | urlencode }}"
         method: GET
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
+          PRIVATE-TOKEN: "{{ api_access_token }}"
         status_code: [200, 404]
         validate_certs: no
-      register: project_check
-      when: api_token is defined
+      register: project_exists_check
+      when: api_access_token is defined
 
-    - name: Création du projet GitLab via l'API
+    - name: Initialisation du dépôt GitLab via API
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects"
+        url: "{{ gl_local_url }}/api/v4/projects"
         method: POST
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
+          PRIVATE-TOKEN: "{{ api_access_token }}"
         body_format: json
         body:
-          name: "{{ project_name }}"
-          path: "{{ project_name }}"
+          name: "{{ app_identifier }}"
+          path: "{{ app_identifier }}"
           visibility: "public"
           initialize_with_readme: false
-        status_code: [200, 201, 400]  # 400 = existe déjà
+        status_code: [200, 201, 400]
         validate_certs: no
-      register: project_response
+      register: create_project_resp
       when: 
-        - api_token is defined
-        - project_check.status == 404
+        - api_access_token is defined
+        - project_exists_check.status == 404
       failed_when: false
 
-    - name: Récupération des informations du projet (pour avoir l'ID)
+    - name: Récupération métadonnées du projet
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects/root%2F{{ project_name }}"
+        url: "{{ gl_local_url }}/api/v4/projects/root%2F{{ app_identifier }}"
         method: GET
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
+          PRIVATE-TOKEN: "{{ api_access_token }}"
         status_code: [200, 404]
         validate_certs: no
-      register: project_info
-      when: api_token is defined
+      register: project_meta
+      when: api_access_token is defined
       failed_when: false
 
-    - name: Affichage des informations du projet
+    - name: Info Projet
       debug:
         msg:
-          - "Projet créé/existant à : {{ gitlab_url }}/{{ project_path }}"
-          - "ID du Projet : {{ project_info.json.id | default('1') }}"
+          - "Projet URL : {{ gl_local_url }}/{{ repo_path }}"
+          - "ID : {{ project_meta.json.id | default('1') }}"
 
-    - name: Suppression du dépôt local existant si présent
+    - name: Nettoyage espace de travail temporaire
       file:
-        path: "{{ local_repo_path }}"
+        path: "{{ temp_git_dir }}"
         state: absent
 
-    - name: Création du répertoire du dépôt local
+    - name: Préparation espace de travail git
       file:
-        path: "{{ local_repo_path }}"
+        path: "{{ temp_git_dir }}"
         state: directory
         mode: '0755'
 
-    - name: Initialisation du dépôt git
+    - name: Configuration git local
       shell: |
-        cd {{ local_repo_path }}
+        cd {{ temp_git_dir }}
         git init
-        git config user.name "Administrator"
-        git config user.email "admin@example.com"
+        git config user.name "DeployBot"
+        git config user.email "deploy@local.host"
       args:
         executable: /bin/bash
 
-    - name: Copie des fichiers du microservice Python vers le dépôt
-      command: cp -r "{{ source_path }}/." "{{ local_repo_path }}/"
+    - name: Peuplement du dépôt
+      command: cp -r "{{ src_dir }}/." "{{ temp_git_dir }}/"
 
-    - name: Suppression du répertoire .venv copié
+    - name: Suppression artefacts python (.venv)
       file:
-        path: "{{ local_repo_path }}/.venv"
+        path: "{{ temp_git_dir }}/.venv"
         state: absent
 
-    - name: Suppression du répertoire __pycache__ copié
+    - name: Suppression artefacts python (__pycache__)
       file:
-        path: "{{ local_repo_path }}/__pycache__"
+        path: "{{ temp_git_dir }}/__pycache__"
         state: absent
 
-    - name: Suppression des fichiers .pyc copiés
-      command: find "{{ local_repo_path }}" -name '*.pyc' -delete
+    - name: Nettoyage fichiers compilés
+      command: find "{{ temp_git_dir }}" -name '*.pyc' -delete
 
-    - name: Vérification de l'existence de .gitlab-ci.yml
+    - name: Vérification présence CI/CD manifest
       stat:
-        path: "{{ local_repo_path }}/.gitlab-ci.yml"
-      register: gitlab_ci_file
+        path: "{{ temp_git_dir }}/.gitlab-ci.yml"
+      register: ci_file_check
 
-    - name: Affichage de l'état CI/CD
+    - name: Statut CI/CD
       debug:
-        msg: "{{ '.gitlab-ci.yml trouvé - Le pipeline CI/CD sera déclenché' if gitlab_ci_file.stat.exists else '.gitlab-ci.yml NON trouvé - Le CI/CD ne s exécutera pas automatiquement' }}"
+        msg: "{{ 'CI détecté' if ci_file_check.stat.exists else 'Pas de CI' }}"
 
-    - name: Ajout du remote git
+    - name: Configuration Remote Git
       shell: |
-        cd {{ local_repo_path }}
-        # Encodage URL du mot de passe pour le remote git
-        ENCODED_PASS=$(echo "{{ gitlab_password }}" | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
-        git remote add origin "http://{{ gitlab_user }}:${ENCODED_PASS}@127.0.0.1/{{ project_path }}.git" || true
+        cd {{ temp_git_dir }}
+        PASS_ENC=$(echo "{{ gl_root_password }}" | sed 's/+/%2B/g; s/\//%2F/g; s/=/%3D/g')
+        git remote add origin "http://{{ admin_user }}:${PASS_ENC}@127.0.0.1/{{ repo_path }}.git" || true
       args:
         executable: /bin/bash
-      when: gitlab_password != ""
+      when: gl_root_password != ""
 
-    - name: Ajout de tous les fichiers à git
+    - name: Indexation des fichiers
       shell: |
-        cd {{ local_repo_path }}
+        cd {{ temp_git_dir }}
         git add .
       args:
         executable: /bin/bash
 
-    - name: Commit des fichiers
+    - name: Commit initial
       shell: |
-        cd {{ local_repo_path }}
-        git commit -m "Commit initial : Microservice Python Tornado" || true
+        cd {{ temp_git_dir }}
+        git commit -m "Init: Microservice Source Code" || true
       args:
         executable: /bin/bash
 
-    - name: Renommage de la branche en main
+    - name: Renommage branche principale
       shell: |
-        cd {{ local_repo_path }}
+        cd {{ temp_git_dir }}
         git branch -M main
       args:
         executable: /bin/bash
 
-    - name: Déprotection de la branche main pour permettre le push
+    - name: Suppression protection branche main
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/protected_branches/main"
+        url: "{{ gl_local_url }}/api/v4/projects/{{ project_meta.json.id }}/protected_branches/main"
         method: DELETE
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
-        status_code: [204, 404]  # 204 = supprimé, 404 = non protégé
+          PRIVATE-TOKEN: "{{ api_access_token }}"
+        status_code: [204, 404]
         validate_certs: no
-      register: unprotect_result
+      register: unprotect_branch
       when: 
-        - api_token is defined
-        - project_info.json.id is defined
+        - api_access_token is defined
+        - project_meta.json.id is defined
       failed_when: false
 
-    - name: Push vers GitLab
+    - name: Push vers le dépôt
       shell: |
-        cd {{ local_repo_path }}
+        cd {{ temp_git_dir }}
         git push -u origin main --force
       args:
         executable: /bin/bash
-      register: push_result
-      when: gitlab_password != ""
+      register: git_push_log
+      when: gl_root_password != ""
 
-    - name: Affichage du résultat du push
+    - name: Log du push
       debug:
-        var: push_result.stdout_lines
-      when: push_result is defined
+        var: git_push_log.stdout_lines
+      when: git_push_log is defined
 
-    - name: Création de la variable K8S_REGISTRY_USER
+    - name: Injection Variable CI - User
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/variables"
+        url: "{{ gl_local_url }}/api/v4/projects/{{ project_meta.json.id }}/variables"
         method: POST
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
+          PRIVATE-TOKEN: "{{ api_access_token }}"
         body_format: json
         body:
           key: "K8S_REGISTRY_USER"
-          value: "{{ gitlab_user }}"
+          value: "{{ admin_user }}"
           protected: false
           masked: false
-        status_code: [201, 400] # 400 si la variable existe déjà
+        status_code: [201, 400]
         validate_certs: no
       when: 
-        - api_token is defined
-        - project_info.json.id is defined
+        - api_access_token is defined
+        - project_meta.json.id is defined
       failed_when: false
 
-    - name: Création de la variable K8S_REGISTRY_PASSWORD
+    - name: Injection Variable CI - Password
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/variables"
+        url: "{{ gl_local_url }}/api/v4/projects/{{ project_meta.json.id }}/variables"
         method: POST
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
+          PRIVATE-TOKEN: "{{ api_access_token }}"
         body_format: json
         body:
           key: "K8S_REGISTRY_PASSWORD"
-          value: "{{ api_token }}"
+          value: "{{ api_access_token }}"
           protected: false
           masked: true
-        status_code: [201, 400] # 400 si la variable existe déjà
+        status_code: [201, 400]
         validate_certs: no
       when: 
-        - api_token is defined
-        - project_info.json.id is defined
+        - api_access_token is defined
+        - project_meta.json.id is defined
       failed_when: false
 
-    - name: Déclenchement du pipeline CI/CD
+    - name: Déclenchement manuel du Pipeline
       uri:
-        url: "{{ gitlab_url }}/api/v4/projects/{{ project_info.json.id }}/pipeline"
+        url: "{{ gl_local_url }}/api/v4/projects/{{ project_meta.json.id }}/pipeline"
         method: POST
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
+          PRIVATE-TOKEN: "{{ api_access_token }}"
         body_format: json
         body:
           ref: "main"
         status_code: [200, 201]
         validate_certs: no
-      register: pipeline_response
+      register: pipeline_trigger
       when: 
-        - api_token is defined
-        - gitlab_ci_file.stat.exists
-        - project_info.json.id is defined
+        - api_access_token is defined
+        - ci_file_check.stat.exists
+        - project_meta.json.id is defined
       failed_when: false
 
-    - name: Création du Runner GitLab via l'API
+    - name: Enregistrement d'un Runner (API)
       uri:
-        url: "{{ gitlab_url }}/api/v4/user/runners"
+        url: "{{ gl_local_url }}/api/v4/user/runners"
         method: POST
         headers:
-          PRIVATE-TOKEN: "{{ api_token }}"
+          PRIVATE-TOKEN: "{{ api_access_token }}"
         body_format: json
         body:
           runner_type: "instance_type"
-          description: "Runner Shell Automatisé"
+          description: "Runner Shell Auto-provisionné"
           tag_list: ["shell", "docker", "automated"]
           run_untagged: true
           locked: false
-        status_code: [201, 400]  # 400 si le runner existe déjà
+        status_code: [201, 400]
         validate_certs: no
-      register: runner_create_response
-      when: api_token is defined
+      register: runner_created
+      when: api_access_token is defined
       failed_when: false
 
-    - name: Extraction du token d'authentification du runner
+    - name: Récupération Token Runner
       set_fact:
-        runner_token: "{{ runner_create_response.json.token }}"
+        runner_auth_token: "{{ runner_created.json.token }}"
       when: 
-        - runner_create_response.json is defined
-        - runner_create_response.json.token is defined
+        - runner_created.json is defined
+        - runner_created.json.token is defined
 
-    - name: Enregistrement du Runner GitLab avec la commande gitlab-runner
+    - name: Configuration locale du Runner
       shell: |
         gitlab-runner register \
           --non-interactive \
-          --url "{{ gitlab_url }}" \
-          --token "{{ runner_token }}" \
+          --url "{{ gl_local_url }}" \
+          --token "{{ runner_auth_token }}" \
           --executor "shell" \
-          --description "Runner Shell Automatisé"
-      register: runner_register_result
-      when: runner_token is defined
+          --description "Runner Shell Auto-provisionné"
+      register: runner_reg_local
+      when: runner_auth_token is defined
       failed_when: false
-      changed_when: "'Runner registered successfully' in runner_register_result.stderr or 'Registered runner' in runner_register_result.stderr"
+      changed_when: "'Runner registered successfully' in runner_reg_local.stderr or 'Registered runner' in runner_reg_local.stderr"
 
-    - name: Assurance que le service GitLab Runner est démarré
+    - name: Démarrage service Runner
       systemd:
         name: gitlab-runner
         state: started
         enabled: yes
-      when: runner_token is defined
+      when: runner_auth_token is defined
       failed_when: false
 
-    - name: Affichage de l'état d'enregistrement du runner
+    - name: État final du Runner
       debug:
         msg:
-          - "Enregistrement du Runner terminé"
-          - "Token du Runner : {{ runner_token | default('Non créé') }}"
-          - "Sortie de l'enregistrement : {{ runner_register_result.stderr | default('N/A') }}"
-      when: runner_token is defined
+          - "Runner configuré"
+          - "Token : {{ runner_auth_token | default('N/A') }}"
+      when: runner_auth_token is defined
 
-    - name: Affichage des informations du pipeline
+    - name: Résumé du déploiement
       debug:
         msg:
-          - "========================================="
-          - "Déploiement Terminé !"
-          - "========================================="
-          - "URL du Projet GitLab : {{ gitlab_url }}/{{ project_path }}"
-          - "Dépôt poussé avec succès !"
-          - "Statut du Pipeline CI/CD : {{ 'Déclenché - ID Pipeline : ' + (pipeline_response.json.id | string) if pipeline_response is defined and pipeline_response.status == 201 else 'Non déclenché (vérifiez .gitlab-ci.yml)' }}"
-          - ""
-          - "Prochaines étapes :"
-          - "1. Visitez {{ gitlab_url }}/{{ project_path }}"
-          - "2. Enregistrez un Runner GitLab si ce n'est pas déjà fait"
-          - "3. Surveillez le pipeline CI/CD : {{ gitlab_url }}/{{ project_path }}/-/pipelines"
-          - "========================================="
+          - "=== Fin de procédure ==="
+          - "Projet disponible : {{ gl_local_url }}/{{ repo_path }}"
+          - "Pipeline ID : {{ pipeline_trigger.json.id if pipeline_trigger is defined and pipeline_trigger.status == 201 else 'N/A' }}"
+          - "Vérifiez : {{ gl_local_url }}/{{ repo_path }}/-/pipelines"
